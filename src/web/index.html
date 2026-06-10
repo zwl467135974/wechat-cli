@@ -112,16 +112,11 @@ function renderMessageContent(msg) {
     bubble = `<div class="message-bubble media-bubble"><span class="media-icon">&#127909;</span> ${escapeHtml(msg.content)}</div>`;
   } else if (msg.type === 47) {
     bubble = `<div class="message-bubble media-bubble"><span class="media-icon">&#128512;</span> ${escapeHtml(msg.content)}</div>`;
-  } else if (msg.type === 49 && (msg.content.includes('<?xml') || msg.content.includes('<msg'))) {
-    const titleMatch = msg.content.match(/<title>([\s\S]*?)<\/title>/);
-    const title = titleMatch ? titleMatch[1] : '';
-    const descMatch = msg.content.match(/<des>([\s\S]*?)<\/des>/);
-    const desc = descMatch && descMatch[1] ? descMatch[1] : '';
-    if (title) {
-      bubble = `<div class="message-bubble app-bubble"><div class="app-title">${escapeHtml(title)}</div>${desc ? `<div class="app-desc">${escapeHtml(desc)}</div>` : ''}</div>`;
-    } else {
-      bubble = `<div class="message-bubble app-bubble"><div class="app-title">[应用消息]</div></div>`;
-    }
+  } else if (msg.type === 49) {
+    const lines = msg.content.split('\n');
+    const title = lines[0] || '[应用消息]';
+    const desc = lines.slice(1).join('\n');
+    bubble = `<div class="message-bubble app-bubble"><div class="app-title">${escapeHtml(title)}</div>${desc ? `<div class="app-desc">${escapeHtml(desc)}</div>` : ''}</div>`;
   } else {
     const tag = getTypeTag(msg.type);
     bubble = `<div class="message-bubble">${escapeHtml(msg.content)}${tag}</div>`;

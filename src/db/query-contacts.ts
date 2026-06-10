@@ -149,7 +149,7 @@ export async function getSessions(
   }).filter(s => !s.isHidden);
 }
 
-async function loadContactMap(
+export async function loadContactMap(
   dataDir: string,
   usernames: string[]
 ): Promise<Map<string, { nickname: string; remark: string; alias: string; smallHeadUrl: string; bigHeadUrl: string }>> {

@@ -7,6 +7,7 @@ import {
   findSingleFile,
 } from "../db/manager.js";
 import { decodeMessageContent } from "../db/codec.js";
+import { loadContactMap } from "../db/query-contacts.js";
 import type { Message } from "../db/models.js";
 import type { Database } from "sql.js";
 
@@ -74,7 +75,9 @@ export async function getMessages(
     return reverse ? -diff : diff;
   });
 
-  return allMessages.slice(0, limit);
+  const result = allMessages.slice(0, limit);
+  await resolveSenderNames(dataDir, result);
+  return result;
 }
 
 export async function searchMessages(
@@ -103,7 +106,9 @@ export async function searchMessages(
   }
 
   allMessages.sort((a, b) => a.seq - b.seq);
-  return allMessages.slice(0, limit);
+  const result = allMessages.slice(0, limit);
+  await resolveSenderNames(dataDir, result);
+  return result;
 }
 
 function findMsgTable(
@@ -263,6 +268,10 @@ async function parseMessageRow(
     content = extractSystemMessage(content);
   }
 
+  if (localType === 49 && content.includes("<")) {
+    content = extractAppMessage(content);
+  }
+
   const isChatRoom = defaultTalker.endsWith("@chatroom");
   let sender = "";
   let isSelf = status === 2;
@@ -310,6 +319,22 @@ async function parseMessageRow(
   };
 }
 
+async function resolveSenderNames(dataDir: string, messages: Message[]): Promise<void> {
+  const wxids = new Set<string>();
+  for (const m of messages) {
+    if (m.sender && m.sender.startsWith("wxid_")) wxids.add(m.sender);
+  }
+  if (wxids.size === 0) return;
+
+  const map = await loadContactMap(dataDir, [...wxids]);
+  for (const m of messages) {
+    if (m.sender && map.has(m.sender)) {
+      const c = map.get(m.sender)!;
+      m.sender = c.remark || c.nickname || m.sender;
+    }
+  }
+}
+
 function getMediaTypeLabel(localType: number): string {
   const labels: Record<number, string> = {
     3: "[图片]",
@@ -327,6 +352,16 @@ function extractSystemMessage(content: string): string {
   const revokemsg = content.match(/<content>([\s\S]*?)<\/content>/);
   if (revokemsg) return revokemsg[1];
   return content;
+}
+
+function extractAppMessage(content: string): string {
+  const titleMatch = content.match(/<title>([\s\S]*?)<\/title>/);
+  if (!titleMatch) return content;
+  const title = titleMatch[1];
+  const descMatch = content.match(/<des>([\s\S]*?)<\/des>/);
+  const desc = descMatch && descMatch[1] ? descMatch[1].trim() : "";
+  if (desc) return `${title}\n${desc}`;
+  return title;
 }
 
 interface PackedInfo {
