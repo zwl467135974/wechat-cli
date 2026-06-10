@@ -69,6 +69,21 @@ function findContactTable(
   return null;
 }
 
+const SYSTEM_ACCOUNTS = new Set([
+  "brandsessionholder",
+  "brandservicesessionholder",
+  "newsapp",
+  "weixin",
+  "filehelper",
+  "floatbottle",
+  "medianote",
+  "fmessage",
+]);
+
+function isSystemAccount(username: string): boolean {
+  return SYSTEM_ACCOUNTS.has(username) || username.startsWith("gh_");
+}
+
 export async function getSessions(
   dataDir: string,
   keyword?: string,
@@ -87,15 +102,18 @@ export async function getSessions(
   let params: unknown[] = [];
 
   if (tableInfo.version === "v4") {
-    sql = `SELECT username, summary as last_message, last_timestamp
-           FROM SessionTable`;
+    sql = `SELECT username, summary as last_message, last_timestamp,
+            unread_count, is_hidden, sort_timestamp
+           FROM SessionTable
+           WHERE is_hidden = 0`;
     if (keyword) {
-      sql += ` WHERE username LIKE ? OR summary LIKE ?`;
+      sql += ` AND (username LIKE ? OR summary LIKE ?)`;
       params = [`%${keyword}%`, `%${keyword}%`];
     }
     sql += ` ORDER BY sort_timestamp DESC`;
   } else {
-    sql = `SELECT strUsrName, strContent as last_message, nTime as last_timestamp
+    sql = `SELECT strUsrName, strContent as last_message, nTime as last_timestamp,
+            0 as unread_count, 0 as is_hidden
            FROM Session`;
     if (keyword) {
       sql += ` WHERE strUsrName LIKE ?`;
@@ -115,6 +133,7 @@ export async function getSessions(
   return rows[0].values.map((row: unknown[]) => {
     const username = String(row[0]);
     const contact = contactMap.get(username);
+    const isSystem = isSystemAccount(username);
     return {
       username,
       nickname: contact?.nickname || "",
@@ -124,8 +143,10 @@ export async function getSessions(
       bigHeadUrl: contact?.bigHeadUrl || "",
       lastMessage: row[1] ? String(row[1]) : undefined,
       lastTime: row[2] ? new Date(Number(row[2]) * 1000).toISOString() : undefined,
+      unreadCount: Number(row[3]) || 0,
+      isHidden: isSystem || Number(row[4]) === 1,
     };
-  });
+  }).filter(s => !s.isHidden);
 }
 
 async function loadContactMap(

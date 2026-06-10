@@ -116,12 +116,25 @@ function renderMessageContent(msg) {
 function renderSessionItem(s) {
   const active = state.currentSession === s.username ? 'active' : '';
   const name = s.remark || s.nickname || s.alias || s.username;
+  const unread = s.unreadCount > 0 ? `<span class="unread-badge">${s.unreadCount > 99 ? '99+' : s.unreadCount}</span>` : '';
+  const time = formatTime(s.lastTime);
+  const msg = s.lastMessage ? escapeHtml(s.lastMessage).substring(0, 40) : '';
+  const avatar = s.smallHeadUrl
+    ? `<img class="session-avatar-img" src="${s.smallHeadUrl}" alt="" loading="lazy" onerror="this.outerHTML='<div class=\\'session-avatar\\'>${getInitial(name)}</div>'">`
+    : `<div class="session-avatar">${getInitial(name)}</div>`;
+
   return `
     <div class="session-item ${active}" data-username="${escapeHtml(s.username)}">
-      <div class="session-avatar">${getInitial(name)}</div>
+      ${avatar}
       <div class="session-info">
-        <div class="session-name">${escapeHtml(name)}</div>
-        <div class="session-meta">${escapeHtml(s.username)}</div>
+        <div class="session-top">
+          <div class="session-name">${escapeHtml(name)}</div>
+          <div class="session-time">${time}</div>
+        </div>
+        <div class="session-bottom">
+          <div class="session-msg">${msg}</div>
+          ${unread}
+        </div>
       </div>
     </div>`;
 }

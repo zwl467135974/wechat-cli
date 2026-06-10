@@ -21,6 +21,7 @@ export interface Session {
   lastMessage?: string;
   lastTime?: string;
   unreadCount?: number;
+  isHidden?: boolean;
 }
 
 export interface Contact {
