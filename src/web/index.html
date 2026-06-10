@@ -188,7 +188,7 @@ async function loadMessages(talkerId, append) {
   state.loading = true;
   try {
     const offset = append ? state.messageOffset : 0;
-    const msgs = await api(`/api/messages?talker_id=${encodeURIComponent(talkerId)}&limit=50&offset=${offset}`);
+    const msgs = await api(`/api/messages?talker_id=${encodeURIComponent(talkerId)}&limit=50&offset=${offset}&reverse=true`);
     if (append) {
       state.messages = [...msgs, ...state.messages];
     } else {
