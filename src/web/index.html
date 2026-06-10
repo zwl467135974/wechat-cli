@@ -576,6 +576,19 @@ async function init() {
 
   renderPage();
 
+  setInterval(async () => {
+    await loadSessions($('#sessionSearch')?.value);
+    await checkStatus();
+    if (state.page === 'chat' && state.currentSession && !state.loading) {
+      const msgs = await api(`/api/messages?talker_id=${encodeURIComponent(state.currentSession)}&limit=50&offset=0&reverse=true`);
+      state.messages = msgs;
+      state.messageOffset = msgs.length;
+      renderChatPage();
+    } else {
+      renderPage();
+    }
+  }, 30000);
+
   document.addEventListener('click', (e) => {
     const si = e.target.closest('.session-item');
     if (si) selectSession(si.dataset.username);
