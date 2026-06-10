@@ -9,8 +9,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "dev": "tsx src/index.ts",
-    "dev:web": "tsx src/index.ts web",
+    "dev": "tsx --watch src/index.ts",
+    "dev:web": "tsx --watch src/index.ts web",
     "start": "node dist/index.js",
     "start:web": "node dist/index.js web",
     "inspector": "npx @modelcontextprotocol/inspector tsx src/index.ts"

@@ -801,3 +801,35 @@ body {
 }
 
 .hidden { display: none !important; }
+
+.media-bubble {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.media-icon {
+  font-size: 20px;
+  font-style: normal;
+}
+
+.app-bubble {
+  border-left: 3px solid var(--accent);
+  padding-left: 12px !important;
+}
+
+.app-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+  font-style: normal;
+  margin-bottom: 4px;
+}
+
+.app-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: normal;
+}

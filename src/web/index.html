@@ -102,13 +102,35 @@ function renderMessageContent(msg) {
   }
   const side = msg.isSelf ? 'self' : 'other';
   const sender = (!msg.isSelf && msg.isChatRoom) ? `<div class="message-sender">${escapeHtml(msg.sender || '')}</div>` : '';
-  const media = msg.mediaPath ? `<div style="color:var(--text-muted);font-size:12px;margin-top:4px">📎 ${escapeHtml(msg.mediaPath)}</div>` : '';
-  const tag = getTypeTag(msg.type);
+
+  let bubble = '';
+  if (msg.type === 3) {
+    bubble = `<div class="message-bubble media-bubble"><span class="media-icon">&#128247;</span> ${escapeHtml(msg.content)}</div>`;
+  } else if (msg.type === 34) {
+    bubble = `<div class="message-bubble media-bubble"><span class="media-icon">&#127908;</span> ${escapeHtml(msg.content)}</div>`;
+  } else if (msg.type === 43) {
+    bubble = `<div class="message-bubble media-bubble"><span class="media-icon">&#127909;</span> ${escapeHtml(msg.content)}</div>`;
+  } else if (msg.type === 47) {
+    bubble = `<div class="message-bubble media-bubble"><span class="media-icon">&#128512;</span> ${escapeHtml(msg.content)}</div>`;
+  } else if (msg.type === 49 && (msg.content.includes('<?xml') || msg.content.includes('<msg'))) {
+    const titleMatch = msg.content.match(/<title>([\s\S]*?)<\/title>/);
+    const title = titleMatch ? titleMatch[1] : '';
+    const descMatch = msg.content.match(/<des>([\s\S]*?)<\/des>/);
+    const desc = descMatch && descMatch[1] ? descMatch[1] : '';
+    if (title) {
+      bubble = `<div class="message-bubble app-bubble"><div class="app-title">${escapeHtml(title)}</div>${desc ? `<div class="app-desc">${escapeHtml(desc)}</div>` : ''}</div>`;
+    } else {
+      bubble = `<div class="message-bubble app-bubble"><div class="app-title">[应用消息]</div></div>`;
+    }
+  } else {
+    const tag = getTypeTag(msg.type);
+    bubble = `<div class="message-bubble">${escapeHtml(msg.content)}${tag}</div>`;
+  }
 
   return `
     <div class="message-row ${side}">
       ${sender}
-      <div class="message-bubble">${escapeHtml(msg.content)}${tag}${media}</div>
+      ${bubble}
       <div class="message-time">${formatTime(msg.time)}</div>
     </div>`;
 }

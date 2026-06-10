@@ -41,7 +41,7 @@ export async function getMessages(
     reverse?: boolean;
   } = {}
 ): Promise<Message[]> {
-  const { keyword, limit = 50, offset = 0, reverse = false } = options;
+  const { keyword, limit = 50, offset = 0, reverse = true } = options;
   const shards = await getShards(dataDir);
   const start = new Date(2010, 0, 1);
   const end = new Date();
@@ -165,9 +165,11 @@ async function queryMessages(
     const rows = db.exec(sql, params);
     if (rows.length === 0) return [];
 
-    return await Promise.all(rows[0].values.map((row: unknown[]) =>
+    const messages = await Promise.all(rows[0].values.map((row: unknown[]) =>
       parseMessageRow(row, talker)
     ));
+    if (reverse) messages.reverse();
+    return messages;
   } catch {
     return [];
   }
@@ -229,16 +231,36 @@ async function parseMessageRow(
 ): Promise<Message> {
   const seq = Number(row[0]) || 0;
   const createTime = Number(row[1]) || 0;
-  const localType = Number(row[2]) || 0;
+  const localTypeRaw = Number(row[2]) || 0;
+  const localType = localTypeRaw & 0xFFFF;
   const rawContent = row[3];
   const compressContent = row[4];
   const status = Number(row[5]) || 0;
 
   let content = "";
   if (rawContent instanceof Uint8Array || Buffer.isBuffer(rawContent)) {
-    content = await decodeMessageContent(Buffer.from(rawContent));
+    const decoded = await decodeMessageContent(Buffer.from(rawContent));
+    if (!decoded || decoded.length === 0 || decoded.charCodeAt(0) < 0x20) {
+      content = getMediaTypeLabel(localType);
+    } else if (localType === 3 || localType === 43) {
+      content = getMediaTypeLabel(localType);
+    } else if (localType === 47) {
+      content = "[表情]";
+    } else if (localType === 34) {
+      content = "[语音]";
+    } else {
+      content = decoded;
+    }
   } else if (rawContent != null) {
     content = String(rawContent);
+  }
+
+  if (!content && localType !== 1 && localType !== 10000 && localType !== 10002) {
+    content = getMediaTypeLabel(localType);
+  }
+
+  if (localType === 10000 || localType === 10002) {
+    content = extractSystemMessage(content);
   }
 
   const isChatRoom = defaultTalker.endsWith("@chatroom");
@@ -286,6 +308,25 @@ async function parseMessageRow(
     content,
     mediaPath,
   };
+}
+
+function getMediaTypeLabel(localType: number): string {
+  const labels: Record<number, string> = {
+    3: "[图片]",
+    34: "[语音]",
+    43: "[视频]",
+    47: "[表情]",
+    48: "[位置]",
+    49: "[文件]",
+  };
+  return labels[localType] || `[消息类型:${localType}]`;
+}
+
+function extractSystemMessage(content: string): string {
+  if (!content.includes("<")) return content;
+  const revokemsg = content.match(/<content>([\s\S]*?)<\/content>/);
+  if (revokemsg) return revokemsg[1];
+  return content;
 }
 
 interface PackedInfo {

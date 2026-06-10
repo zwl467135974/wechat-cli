@@ -125,10 +125,17 @@ app.get("/api/search", async (c) => {
   return c.json(results);
 });
 
-const webDir = path.resolve(
+const distRelativeWebDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../web"
 );
+const srcRelativeWebDir = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../src/web"
+);
+const webDir = fs.existsSync(distRelativeWebDir)
+  ? distRelativeWebDir
+  : srcRelativeWebDir;
 
 app.get("/assets/*", serveStatic({ root: webDir }));
 
