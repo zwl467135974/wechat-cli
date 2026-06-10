@@ -105,7 +105,12 @@ function renderMessageContent(msg) {
 
   let bubble = '';
   if (msg.type === 3) {
-    bubble = `<div class="message-bubble media-bubble"><span class="media-icon">&#128247;</span> ${escapeHtml(msg.content)}</div>`;
+    if (msg.mediaPath) {
+      const imgSrc = `${API}/api/image?path=${encodeURIComponent(msg.mediaPath)}&talker=${encodeURIComponent(msg.talker)}`;
+      bubble = `<div class="message-bubble image-bubble"><img class="chat-image" src="${imgSrc}" alt="[图片]" loading="lazy" onerror="this.onerror=null;this.parentElement.innerHTML='<span class=\\'media-icon\\'>&#128247;</span> [图片]'"/></div>`;
+    } else {
+      bubble = `<div class="message-bubble media-bubble"><span class="media-icon">&#128247;</span> ${escapeHtml(msg.content)}</div>`;
+    }
   } else if (msg.type === 34) {
     bubble = `<div class="message-bubble media-bubble"><span class="media-icon">&#127908;</span> ${escapeHtml(msg.content)}</div>`;
   } else if (msg.type === 43) {

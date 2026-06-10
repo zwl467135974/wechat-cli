@@ -833,3 +833,21 @@ body {
   color: var(--text-muted);
   font-style: normal;
 }
+
+.image-bubble {
+  padding: 4px !important;
+  max-width: 300px;
+  background: transparent !important;
+}
+
+.chat-image {
+  max-width: 100%;
+  max-height: 300px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  display: block;
+}
+
+.chat-image:hover {
+  opacity: 0.9;
+}

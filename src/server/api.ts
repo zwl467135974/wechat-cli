@@ -9,6 +9,13 @@ import {
 import { closeAll, findFilesByType } from "../db/manager.js";
 import { execPython } from "../python/runner.js";
 import { getConfig } from "../config.js";
+import {
+  resolveImagePath,
+  resolveCacheThumb,
+  decryptImage,
+  scanImageKey,
+  getImageKeyStatus,
+} from "./image.js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -133,6 +140,49 @@ app.get("/api/search", async (c) => {
 
   const results = await searchMessages(config.dataDir, keyword, limit, offset);
   return c.json(results);
+});
+
+app.get("/api/image", async (c) => {
+  const mediaPath = c.req.query("path");
+  const talker = c.req.query("talker");
+  const seq = c.req.query("seq");
+
+  if (!mediaPath || !talker) {
+    return c.json({ error: "path and talker are required" }, 400);
+  }
+
+  const config = getConfig();
+  const datPath = resolveImagePath(config.wechatDbSrcPath, talker, mediaPath);
+
+  if (!datPath) {
+    return c.json({ error: "Image file not found" }, 404);
+  }
+
+  const decrypted = await decryptImage(datPath);
+  if (decrypted) {
+    const fmt = datPath.toLowerCase();
+    const mime = fmt.includes(".png") ? "image/png" : fmt.includes(".webp") ? "image/webp" : "image/jpeg";
+    return new Response(new Uint8Array(decrypted), {
+      headers: {
+        "Content-Type": mime,
+        "Cache-Control": "public, max-age=3600",
+      },
+    });
+  }
+
+  return c.json({ error: "Image decryption key not available", keyStatus: getImageKeyStatus() }, 503);
+});
+
+app.get("/api/image-key", (c) => {
+  return c.json(getImageKeyStatus());
+});
+
+app.post("/api/scan-image-key", async (c) => {
+  const result = await scanImageKey();
+  if (result) {
+    return c.json({ success: true, key: result.key, xor_key: result.xor_key });
+  }
+  return c.json({ success: false, error: "Key not found. Try viewing some images in WeChat first." });
 });
 
 const distRelativeWebDir = path.resolve(

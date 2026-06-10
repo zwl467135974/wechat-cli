@@ -162,7 +162,7 @@ async function queryMessages(
   const where = buildWhereClause(talker, talkerId, keyword, tableName);
   params = where.params;
 
-  sql = `SELECT sort_seq, create_time, local_type, message_content, compress_content, status, source
+  sql = `SELECT sort_seq, create_time, local_type, message_content, compress_content, status, source, packed_info_data
          FROM "${tableName}" ${where.clause}
          ORDER BY sort_seq ${order}
          LIMIT ${limit} OFFSET ${offset}`;
@@ -213,7 +213,7 @@ async function searchInTable(
   limit: number,
   offset: number
 ): Promise<Message[]> {
-  const sql = `SELECT sort_seq, create_time, local_type, message_content, compress_content, status, source
+  const sql = `SELECT sort_seq, create_time, local_type, message_content, compress_content, status, source, packed_info_data
                FROM "${tableName}"
                WHERE message_content LIKE ?
                ORDER BY sort_seq ASC
@@ -242,6 +242,7 @@ async function parseMessageRow(
   const rawContent = row[3];
   const compressContent = row[4];
   const status = Number(row[5]) || 0;
+  const packedInfoRaw = row[7];
 
   let rawText = "";
   if (rawContent instanceof Uint8Array || Buffer.isBuffer(rawContent)) {
@@ -291,8 +292,13 @@ async function parseMessageRow(
   }
 
   let mediaPath: string | undefined;
-  if (compressContent instanceof Uint8Array || Buffer.isBuffer(compressContent)) {
-    const packedInfo = parsePackedInfo(Buffer.from(compressContent));
+  const packedSource = (packedInfoRaw instanceof Uint8Array || Buffer.isBuffer(packedInfoRaw))
+    ? Buffer.from(packedInfoRaw)
+    : (compressContent instanceof Uint8Array || Buffer.isBuffer(compressContent))
+      ? Buffer.from(compressContent)
+      : undefined;
+  if (packedSource) {
+    const packedInfo = parsePackedInfo(packedSource);
     if (packedInfo) {
       if (localType === 3 && packedInfo.imageMd5) {
         const talkerMd5 = md5(defaultTalker);
@@ -373,7 +379,6 @@ interface PackedInfo {
 function parsePackedInfo(data: Buffer): PackedInfo | null {
   try {
     const result: PackedInfo = {};
-    // Simple protobuf-like field extraction
     let offset = 0;
     while (offset < data.length) {
       const byte = data[offset];
@@ -388,10 +393,13 @@ function parsePackedInfo(data: Buffer): PackedInfo | null {
         const fieldData = data.subarray(offset + len.size, offset + len.size + len.value);
         offset += len.size + len.value;
 
-        if (fieldNum === 1 && fieldData.length > 0) {
-          result.imageMd5 = extractMd5FromProto(fieldData);
-        } else if (fieldNum === 2 && fieldData.length > 0) {
-          result.videoMd5 = extractMd5FromProto(fieldData);
+        const text = fieldData.toString("utf-8").replace(/[^0-9a-fA-F]/g, "");
+        if (/^[0-9a-f]{32}$/i.test(text)) {
+          if (!result.imageMd5) {
+            result.imageMd5 = text;
+          } else {
+            result.videoMd5 = text;
+          }
         }
       } else if (wireType === 0) {
         const v = readVarint(data, offset);
@@ -409,41 +417,6 @@ function parsePackedInfo(data: Buffer): PackedInfo | null {
   } catch {
     return null;
   }
-}
-
-function extractMd5FromProto(data: Buffer): string | undefined {
-  let offset = 0;
-  while (offset < data.length) {
-    const byte = data[offset];
-    if (byte === undefined) break;
-    const fieldNum = byte >> 3;
-    const wireType = byte & 0x07;
-    offset++;
-
-    if (wireType === 2) {
-      const len = readVarint(data, offset);
-      if (len.value < 0 || offset + len.size + len.value > data.length) break;
-      const fieldData = data.subarray(offset + len.size, offset + len.size + len.value);
-      offset += len.size + len.value;
-
-      // md5 field is typically a 32-byte string
-      if (fieldData.length === 32 || fieldData.length === 16) {
-        const str = fieldData.toString("utf-8");
-        if (/^[0-9a-f]{32}$/i.test(str)) return str;
-        if (fieldData.length === 16) return fieldData.toString("hex");
-      }
-    } else if (wireType === 0) {
-      const v = readVarint(data, offset);
-      offset += v.size;
-    } else if (wireType === 1) {
-      offset += 8;
-    } else if (wireType === 5) {
-      offset += 4;
-    } else {
-      break;
-    }
-  }
-  return undefined;
 }
 
 function readVarint(

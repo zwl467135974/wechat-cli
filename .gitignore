@@ -9,10 +9,27 @@ __pycache__/
 *.pyo
 
 python/all_keys.json
+python/image_key.txt
 python/_args.json
 python/_test_decrypt.py
 python/_verify.py
 python/_check_tables.py
+python/debug_*.py
+python/scan_*.py
+python/bruteforce_*.py
+python/cng_*.py
+python/fast_scan.py
+python/find_image_key.py
+python/scan_dat_content.py
+python/scanner.c
+python/search_dll.py
+python/test_dll_*.py
+python/test_xml_key.py
+python/try_keys.py
+python/analyze_dll.py
+check_aeskey.mjs
+server_err.txt
+server_out.txt
 
 .playwright-mcp/
 test-error.txt
