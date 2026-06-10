@@ -25,6 +25,10 @@ const MSG_TYPES: Record<number, string> = {
 
 let shardCache: Map<string, ReturnType<typeof buildShardIndex>> = new Map();
 
+export function clearShardCache() {
+  shardCache.clear();
+}
+
 async function getShards(dataDir: string) {
   if (!shardCache.has(dataDir)) {
     shardCache.set(dataDir, buildShardIndex(dataDir));

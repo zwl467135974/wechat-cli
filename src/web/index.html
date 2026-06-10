@@ -160,7 +160,9 @@ async function checkStatus() {
   try {
     const s = await api('/api/status');
     $('#statusDot').className = 'status-dot';
-    $('#statusText').textContent = `${s.dbCount} 个数据库`;
+    const refreshInfo = await api('/api/last-refresh');
+    const refreshText = refreshInfo.lastRefresh ? ` | 更新: ${new Date(refreshInfo.lastRefresh).toLocaleTimeString('zh-CN')}` : '';
+    $('#statusText').textContent = `${s.dbCount} 个数据库${refreshText}`;
     if (s.hasData && s.dbCount === 0) {
       $('#statusText').textContent = '暂无数据 - 请先设置';
       $('#statusDot').className = 'status-dot disconnected';

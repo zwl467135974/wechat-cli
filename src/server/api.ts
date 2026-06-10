@@ -19,6 +19,10 @@ app.use("*", cors());
 
 app.get("/api/health", (c) => c.json({ status: "ok" }));
 
+app.get("/api/last-refresh", (c) => {
+  return c.json({ lastRefresh: globalThis.__wechatLastRefresh || null });
+});
+
 app.get("/api/status", (c) => {
   const config = getConfig();
   const dataDir = config.dataDir;

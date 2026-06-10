@@ -1,11 +1,44 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { serve } from "@hono/node-server";
+import { spawn } from "node:child_process";
 import { z } from "zod";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { initConfig } from "./config.js";
 import { handleToolCall } from "./tools/handlers.js";
 import { app } from "./server/api.js";
 import { closeAll } from "./db/manager.js";
+import { clearShardCache } from "./db/query-messages.js";
+import { execPython } from "./python/runner.js";
+import { getConfig } from "./config.js";
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __wechatLastRefresh: string | undefined;
+}
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PYTHON_DIR = path.resolve(__dirname, "../python");
+
+function runDecrypt(dbDir: string, outDir: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const scriptPath = path.join(PYTHON_DIR, "decrypt_db_v2.py");
+    const proc = spawn("python", [scriptPath, "--db-dir", dbDir, "--out-dir", outDir], {
+      cwd: PYTHON_DIR,
+      env: { ...process.env },
+    });
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (d: unknown) => { stdout += String(d); });
+    proc.stderr.on("data", (d: unknown) => { stderr += String(d); });
+    proc.on("close", (code: number | null) => {
+      if (code === 0) resolve(stdout.trim());
+      else reject(new Error(stderr || stdout));
+    });
+    proc.on("error", (err: Error) => reject(err));
+  });
+}
 
 function createMcpServer() {
   const server = new McpServer({
@@ -116,6 +149,7 @@ async function startWebMode() {
   const port = Number(process.env.PORT) || 5200;
   const dataDir = process.env.DATA_DIR || "decrypted";
   const pythonPath = process.env.PYTHON_PATH || "python";
+  const autoRefreshMs = Number(process.env.AUTO_REFRESH_MS) || 60000;
 
   initConfig({
     dataDir,
@@ -136,8 +170,25 @@ async function startWebMode() {
     (info) => {
       console.log(`WeChat CLI Web UI running at http://localhost:${info.port}`);
       console.log(`Data directory: ${dataDir}`);
+      console.log(`Auto refresh: every ${autoRefreshMs / 1000}s`);
     }
   );
+
+  if (autoRefreshMs > 0) {
+    setInterval(async () => {
+      try {
+        closeAll();
+        clearShardCache();
+        const cfg = getConfig();
+        await runDecrypt(cfg.wechatDbSrcPath, cfg.dataDir);
+        const ts = new Date().toISOString();
+        globalThis.__wechatLastRefresh = ts;
+        console.log(`[${ts}] Auto refresh completed`);
+      } catch (e) {
+        console.error(`[${new Date().toISOString()}] Auto refresh failed:`, e instanceof Error ? e.message : e);
+      }
+    }, autoRefreshMs);
+  }
 
   process.on("SIGINT", () => {
     closeAll();
