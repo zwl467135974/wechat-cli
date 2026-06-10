@@ -1,0 +1,36 @@
+{
+  "name": "wechat-cli",
+  "version": "1.0.0",
+  "description": "WeChat chat data MCP server - extract and query WeChat PC database for AI tools",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "wechat-cli": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "dev:web": "tsx src/index.ts web",
+    "start": "node dist/index.js",
+    "start:web": "node dist/index.js web",
+    "inspector": "npx @modelcontextprotocol/inspector tsx src/index.ts"
+  },
+  "keywords": [
+    "wechat",
+    "mcp",
+    "ai"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^25.9.2",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "hono": "^4.12.25",
+    "sql.js": "^1.14.1",
+    "zstd-codec": "^0.1.5"
+  }
+}

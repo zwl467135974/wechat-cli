@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>微信聊天助手</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<div id="app">
+  <header class="header">
+    <div class="header-logo">微信聊天助手</div>
+    <nav class="header-nav">
+      <button class="nav-btn active" data-page="chat">聊天</button>
+      <button class="nav-btn" data-page="contacts">通讯录</button>
+      <button class="nav-btn" data-page="search">搜索</button>
+      <button class="nav-btn" data-page="dashboard">统计</button>
+      <button class="nav-btn" data-page="setup">设置</button>
+    </nav>
+    <div class="header-actions">
+      <div class="status-badge" id="statusBadge">
+        <span class="status-dot disconnected" id="statusDot"></span>
+        <span id="statusText">加载中...</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="main-content" id="mainContent"></main>
+</div>
+
+<script>
+const API = '';
+let state = {
+  page: 'chat',
+  sessions: [],
+  currentSession: null,
+  messages: [],
+  contacts: [],
+  searchResults: [],
+  messageOffset: 0,
+  contactOffset: 0,
+  searchOffset: 0,
+  loading: false,
+};
+
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => document.querySelectorAll(sel);
+const mainContent = () => $('#mainContent');
+
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, opts);
+  if (!res.ok) throw new Error(`API Error ${res.status}`);
+  return res.json();
+}
+
+function showToast(msg, type = 'success') {
+  const t = document.createElement('div');
+  t.className = `toast toast-${type}`;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function formatTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if (d.toDateString() === now.toDateString()) return time;
+  return `${d.getMonth()+1}/${d.getDate()} ${time}`;
+}
+
+function formatDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
+function getInitial(name) {
+  if (!name) return '?';
+  return name.charAt(0).toUpperCase();
+}
+
+function getTypeTag(type) {
+  const map = { 3:'image', 34:'voice', 43:'video', 47:'emoji', 49:'app', 10000:'system', 10002:'revoke' };
+  const labels = { image:'图片', voice:'语音', video:'视频', emoji:'表情', app:'应用', system:'系统', revoke:'撤回' };
+  const t = map[type];
+  if (!t) return '';
+  return `<span class="message-type-tag tag-${t}">${labels[t]}</span>`;
+}
+
+function renderMessageContent(msg) {
+  if (msg.type === 10000 || msg.type === 10002) {
+    return `<div class="message-system"><span class="message-bubble">${escapeHtml(msg.content)}</span></div>`;
+  }
+  const side = msg.isSelf ? 'self' : 'other';
+  const sender = (!msg.isSelf && msg.isChatRoom) ? `<div class="message-sender">${escapeHtml(msg.sender || '')}</div>` : '';
+  const media = msg.mediaPath ? `<div style="color:var(--text-muted);font-size:12px;margin-top:4px">📎 ${escapeHtml(msg.mediaPath)}</div>` : '';
+  const tag = getTypeTag(msg.type);
+
+  return `
+    <div class="message-row ${side}">
+      ${sender}
+      <div class="message-bubble">${escapeHtml(msg.content)}${tag}${media}</div>
+      <div class="message-time">${formatTime(msg.time)}</div>
+    </div>`;
+}
+
+function renderSessionItem(s) {
+  const active = state.currentSession === s.username ? 'active' : '';
+  const name = s.remark || s.nickname || s.alias || s.username;
+  return `
+    <div class="session-item ${active}" data-username="${escapeHtml(s.username)}">
+      <div class="session-avatar">${getInitial(name)}</div>
+      <div class="session-info">
+        <div class="session-name">${escapeHtml(name)}</div>
+        <div class="session-meta">${escapeHtml(s.username)}</div>
+      </div>
+    </div>`;
+}
+
+async function checkStatus() {
+  try {
+    const s = await api('/api/status');
+    $('#statusDot').className = 'status-dot';
+    $('#statusText').textContent = `${s.dbCount} 个数据库`;
+    if (s.hasData && s.dbCount === 0) {
+      $('#statusText').textContent = '暂无数据 - 请先设置';
+      $('#statusDot').className = 'status-dot disconnected';
+    }
+  } catch {
+    $('#statusDot').className = 'status-dot disconnected';
+    $('#statusText').textContent = '服务离线';
+  }
+}
+
+async function loadSessions(keyword) {
+  state.loading = true;
+  try {
+    const q = keyword ? `?keyword=${encodeURIComponent(keyword)}` : '';
+    state.sessions = await api(`/api/sessions${q}`);
+  } catch (e) {
+    showToast('加载会话失败: ' + e.message, 'error');
+    state.sessions = [];
+  }
+  state.loading = false;
+}
+
+async function loadMessages(talkerId, append) {
+  if (!talkerId) return;
+  state.loading = true;
+  try {
+    const offset = append ? state.messageOffset : 0;
+    const msgs = await api(`/api/messages?talker_id=${encodeURIComponent(talkerId)}&limit=50&offset=${offset}`);
+    if (append) {
+      state.messages = [...msgs, ...state.messages];
+    } else {
+      state.messages = msgs;
+    }
+    state.messageOffset = append ? offset + msgs.length : msgs.length;
+  } catch (e) {
+    showToast('加载消息失败: ' + e.message, 'error');
+  }
+  state.loading = false;
+}
+
+function renderChatPage() {
+  const sessionHtml = state.sessions.map(renderSessionItem).join('');
+  const current = state.sessions.find(s => s.username === state.currentSession);
+  const name = current ? (current.remark || current.nickname || current.alias || current.username) : '';
+
+  let messagesHtml = '';
+  if (state.messages.length === 0 && state.currentSession) {
+    messagesHtml = '<div class="empty-state"><div class="loading-spinner"></div><div>加载中...</div></div>';
+  } else if (state.messages.length === 0) {
+    messagesHtml = '<div class="empty-state"><div class="empty-state-icon">💬</div><div class="empty-state-text">选择一个会话查看聊天记录</div></div>';
+  } else {
+    const loadMore = state.messageOffset >= 50 ? `<div class="load-more-bar"><button class="btn btn-secondary btn-sm" onclick="loadOlder()">加载更多历史消息</button></div>` : '';
+    messagesHtml = loadMore + state.messages.map(renderMessageContent).join('');
+  }
+
+  mainContent().innerHTML = `
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <input class="search-box" placeholder="搜索会话..." id="sessionSearch" value="${escapeHtml($('#sessionSearch')?.value || '')}">
+      </div>
+      <div class="session-list" id="sessionList">
+        ${sessionHtml || '<div class="empty-state" style="padding:40px"><div class="empty-state-icon">📭</div><div>暂无会话</div></div>'}
+      </div>
+    </div>
+    <div class="chat-area">
+      ${state.currentSession ? `
+        <div class="chat-header">
+          <div class="session-avatar">${getInitial(name)}</div>
+          <div>
+            <div class="chat-header-title">${escapeHtml(name)}</div>
+            <div class="chat-header-info">${escapeHtml(state.currentSession)}</div>
+          </div>
+        </div>
+        <div class="messages-container" id="messagesContainer">${messagesHtml}</div>
+      ` : `
+        <div class="empty-state">
+          <div class="empty-state-icon">💬</div>
+          <div class="empty-state-text">选择一个会话开始浏览</div>
+        </div>
+      `}
+    </div>`;
+
+  const mc = $('#messagesContainer');
+  if (mc && !window._preservingScroll) mc.scrollTop = mc.scrollHeight;
+  window._preservingScroll = false;
+}
+
+async function selectSession(username) {
+  state.currentSession = username;
+  state.messages = [];
+  state.messageOffset = 0;
+  renderChatPage();
+  await loadMessages(username);
+  renderChatPage();
+}
+
+window.loadOlder = async function() {
+  window._preservingScroll = true;
+  await loadMessages(state.currentSession, true);
+  renderChatPage();
+};
+
+function renderContactsPage() {
+  const cards = state.contacts.map(c => {
+    const name = c.remark || c.nickname || c.alias || c.username;
+    return `
+      <div class="contact-card" data-username="${escapeHtml(c.username)}">
+        <div class="contact-avatar">${getInitial(name)}</div>
+        <div>
+          <div class="contact-name">${escapeHtml(name)}</div>
+          ${c.remark ? `<div class="contact-remark">${escapeHtml(c.remark)}</div>` : ''}
+          ${c.alias ? `<div class="contact-alias">@${escapeHtml(c.alias)}</div>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  mainContent().innerHTML = `
+    <div class="page-container">
+      <div class="toolbar">
+        <input class="search-input" placeholder="搜索联系人..." id="contactSearch">
+        <button class="btn btn-primary" onclick="searchContacts()">搜索</button>
+      </div>
+      <div class="grid grid-3" id="contactsGrid">${cards || '<div class="empty-state"><div>暂无联系人</div></div>'}</div>
+      <div class="pagination">
+        <span class="pagination-info">${state.contactOffset} - ${state.contactOffset + state.contacts.length}</span>
+        <button class="btn btn-secondary btn-sm" onclick="prevContacts()">上一页</button>
+        <button class="btn btn-secondary btn-sm" onclick="nextContacts()">下一页</button>
+      </div>
+    </div>`;
+
+  $$('.contact-card').forEach(el => {
+    el.onclick = () => {
+      state.page = 'chat';
+      updateNav();
+      selectSession(el.dataset.username);
+    };
+  });
+}
+
+async function loadContacts(keyword, offset = 0) {
+  try {
+    const q = keyword ? `&keyword=${encodeURIComponent(keyword)}` : '';
+    state.contacts = await api(`/api/contacts?limit=60&offset=${offset}${q}`);
+    state.contactOffset = offset;
+  } catch (e) {
+    showToast('加载联系人失败: ' + e.message, 'error');
+  }
+  renderContactsPage();
+}
+
+window.searchContacts = () => loadContacts($('#contactSearch')?.value);
+window.nextContacts = () => loadContacts($('#contactSearch')?.value, state.contactOffset + 60);
+window.prevContacts = () => loadContacts($('#contactSearch')?.value, Math.max(0, state.contactOffset - 60));
+
+function renderSearchPage() {
+  const results = state.searchResults.map(r => {
+    const talkerName = r.talker || '';
+    const highlighted = r.content ? escapeHtml(r.content).replace(
+      new RegExp(escapeHtml(state.searchKeyword || ''), 'gi'),
+      match => `<mark>${match}</mark>`
+    ) : '';
+    return `
+      <div class="search-result-item" data-talker="${escapeHtml(talkerName)}">
+        <div class="search-result-talk">${escapeHtml(talkerName)} ${getTypeTag(r.type)}</div>
+        <div class="search-result-content">${highlighted}</div>
+        <div class="search-result-time">${formatDate(r.time)}</div>
+      </div>`;
+  }).join('');
+
+  mainContent().innerHTML = `
+    <div class="page-container">
+      <h1 class="page-title">全局搜索</h1>
+      <div class="toolbar">
+        <input class="search-input" placeholder="搜索所有聊天记录..." id="globalSearch" value="${escapeHtml(state.searchKeyword || '')}">
+        <button class="btn btn-primary" onclick="doSearch()">搜索</button>
+      </div>
+      <div id="searchResults">${results || '<div class="empty-state"><div class="empty-state-icon">🔍</div><div>输入关键词搜索所有聊天记录</div></div>'}</div>
+      ${state.searchResults.length > 0 ? `
+        <div class="pagination">
+          <span class="pagination-info">${state.searchOffset} - ${state.searchOffset + state.searchResults.length}</span>
+          <button class="btn btn-secondary btn-sm" onclick="prevSearch()">上一页</button>
+          <button class="btn btn-secondary btn-sm" onclick="nextSearch()">下一页</button>
+        </div>` : ''}
+    </div>`;
+
+  $$('.search-result-item').forEach(el => {
+    el.onclick = () => {
+      state.page = 'chat';
+      updateNav();
+      selectSession(el.dataset.talker);
+    };
+  });
+}
+
+async function doSearch(keyword, offset = 0) {
+  const kw = keyword || $('#globalSearch')?.value;
+  if (!kw) return;
+  state.searchKeyword = kw;
+  try {
+    state.searchResults = await api(`/api/search?keyword=${encodeURIComponent(kw)}&limit=50&offset=${offset}`);
+    state.searchOffset = offset;
+  } catch (e) {
+    showToast('搜索失败: ' + e.message, 'error');
+    state.searchResults = [];
+  }
+  renderSearchPage();
+}
+
+window.doSearch = doSearch;
+window.nextSearch = () => doSearch(state.searchKeyword, state.searchOffset + 50);
+window.prevSearch = () => doSearch(state.searchKeyword, Math.max(0, state.searchOffset - 50));
+
+function renderDashboard() {
+  const totalSessions = state.sessions.length;
+  const totalContacts = state.contacts.length;
+  const chatrooms = state.sessions.filter(s => s.username.endsWith('@chatroom')).length;
+  const personal = totalSessions - chatrooms;
+
+  const topSenders = {};
+  state.messages.forEach(m => {
+    const s = m.sender || m.talker;
+    topSenders[s] = (topSenders[s] || 0) + 1;
+  });
+  const topList = Object.entries(topSenders).sort((a,b) => b[1] - a[1]).slice(0, 10);
+  const maxCount = topList.length > 0 ? topList[0][1] : 1;
+
+  const typeCounts = {};
+  state.messages.forEach(m => {
+    const types = { 1:'文本', 3:'图片', 34:'语音', 43:'视频', 47:'表情', 49:'应用', 10000:'系统' };
+    const t = types[m.type] || '其他';
+    typeCounts[t] = (typeCounts[t] || 0) + 1;
+  });
+  const typeColors = { '文本':'#3b82f6', '图片':'#22c55e', '语音':'#f97316', '视频':'#a855f7', '表情':'#eab308', '应用':'#06b6d4', '系统':'#64748b', '其他':'#94a3b8' };
+
+  const typeBarHtml = Object.entries(typeCounts).sort((a,b) => b[1]-a[1]).map(([type, count]) => {
+    const pct = state.messages.length > 0 ? (count/state.messages.length*100) : 0;
+    return `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="width:50px;font-size:13px;color:var(--text-secondary)">${type}</span>
+        <div class="stat-bar" style="flex:1"><div class="stat-bar-fill" style="width:${pct}%;background:${typeColors[type]||'#3b82f6'}"></div></div>
+        <span style="width:50px;font-size:13px;text-align:right;color:var(--text-muted)">${count}</span>
+      </div>`;
+  }).join('');
+
+  const topListHtml = topList.map(([name, count], i) => {
+    const pct = (count / maxCount) * 100;
+    return `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="width:24px;font-size:13px;color:var(--text-muted)">${i+1}</span>
+        <span style="width:120px;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(name)}</span>
+        <div class="stat-bar" style="flex:1"><div class="stat-bar-fill" style="width:${pct}%;background:var(--accent)"></div></div>
+        <span style="width:50px;font-size:13px;text-align:right;color:var(--text-muted)">${count}</span>
+      </div>`;
+  }).join('');
+
+  mainContent().innerHTML = `
+    <div class="page-container">
+      <h1 class="page-title">数据统计</h1>
+      <div class="grid grid-3" style="margin-bottom:24px">
+        <div class="card">
+          <div class="card-title">总会话数</div>
+          <div class="card-value">${totalSessions}</div>
+        </div>
+        <div class="card">
+          <div class="card-title">私聊</div>
+          <div class="card-value">${personal}</div>
+        </div>
+        <div class="card">
+          <div class="card-title">群聊</div>
+          <div class="card-value">${chatrooms}</div>
+        </div>
+      </div>
+      <div class="grid grid-2">
+        <div class="card">
+          <div class="card-title">消息类型分布</div>
+          <div style="margin-top:12px">${typeBarHtml || '<div style="color:var(--text-muted)">选择会话后查看统计</div>'}</div>
+        </div>
+        <div class="card">
+          <div class="card-title">发送者排行</div>
+          <div style="margin-top:12px">${topListHtml || '<div style="color:var(--text-muted)">选择会话后查看排行</div>'}</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderSetupPage() {
+  mainContent().innerHTML = `
+    <div class="page-container">
+      <div class="setup-wizard">
+        <h1 class="page-title">初始设置</h1>
+
+        <div class="setup-step">
+          <h3><span class="step-number">1</span> 提取数据库密钥</h3>
+          <div class="input-group">
+            <label>微信路径（留空自动检测）</label>
+            <input class="input-field" id="setupWxPath" placeholder="C:\\Program Files\\Tencent\\Weixin\\Weixin.exe">
+          </div>
+          <button class="btn btn-primary" onclick="doExtractKey()">提取密钥</button>
+          <div id="keyResult" class="log-output" style="margin-top:12px;display:none"></div>
+        </div>
+
+        <div class="setup-step">
+          <h3><span class="step-number">2</span> 解密数据库</h3>
+          <div class="input-group">
+            <label>数据库密钥（64位十六进制字符串）</label>
+            <input class="input-field" id="setupDbKey" placeholder="粘贴上一步获取的密钥">
+          </div>
+          <div class="input-group">
+            <label>微信数据路径</label>
+            <input class="input-field" id="setupSrcPath" placeholder="例如 C:\\Users\\xxx\\Documents\\WeChat Files\\wxid_xxx">
+          </div>
+          <button class="btn btn-primary" onclick="doDecrypt()">开始解密</button>
+          <div id="decryptResult" class="log-output" style="margin-top:12px;display:none"></div>
+        </div>
+
+        <div class="setup-step">
+          <h3><span class="step-number">3</span> 开始浏览</h3>
+          <p style="color:var(--text-secondary);margin-bottom:12px">解密完成后，切换到聊天标签页即可浏览聊天记录。</p>
+          <button class="btn btn-secondary" onclick="navigateTo('chat')">进入聊天</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+window.doExtractKey = async function() {
+  const el = $('#keyResult');
+  el.style.display = 'block';
+  el.textContent = '正在提取密钥...（如提示请登录微信）';
+  try {
+    const res = await api('/api/extract-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        wechat_path: $('#setupWxPath')?.value || '',
+      }),
+    });
+    el.textContent = res.result;
+    const keyMatch = res.result.match(/key[=:]\s*([0-9a-fA-F]{64})/);
+    if (keyMatch) {
+      $('#setupDbKey').value = keyMatch[1];
+      showToast('密钥提取成功！');
+    }
+  } catch (e) {
+    el.textContent = '错误: ' + e.message;
+  }
+};
+
+window.doDecrypt = async function() {
+  const el = $('#decryptResult');
+  el.style.display = 'block';
+  el.textContent = '正在解密...';
+  try {
+    const res = await api('/api/decrypt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        key: $('#setupDbKey')?.value,
+        src_path: $('#setupSrcPath')?.value,
+      }),
+    });
+    el.textContent = res.result;
+    showToast('解密完成！');
+    await checkStatus();
+  } catch (e) {
+    el.textContent = '错误: ' + e.message;
+  }
+};
+
+function updateNav() {
+  $$('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.page === state.page));
+}
+
+function navigateTo(page) {
+  state.page = page;
+  updateNav();
+  renderPage();
+}
+window.navigateTo = navigateTo;
+
+function renderPage() {
+  switch (state.page) {
+    case 'chat':
+      renderChatPage();
+      break;
+    case 'contacts':
+      if (state.contacts.length === 0) loadContacts();
+      else renderContactsPage();
+      break;
+    case 'search':
+      renderSearchPage();
+      break;
+    case 'dashboard':
+      renderDashboard();
+      break;
+    case 'setup':
+      renderSetupPage();
+      break;
+  }
+}
+
+async function init() {
+  await checkStatus();
+
+  $$('.nav-btn').forEach(btn => {
+    btn.onclick = () => navigateTo(btn.dataset.page);
+  });
+
+  try {
+    await loadSessions();
+  } catch {}
+
+  renderPage();
+
+  document.addEventListener('click', (e) => {
+    const si = e.target.closest('.session-item');
+    if (si) selectSession(si.dataset.username);
+  });
+
+  document.addEventListener('input', (e) => {
+    if (e.target.id === 'sessionSearch') {
+      clearTimeout(window._searchTimeout);
+      window._searchTimeout = setTimeout(() => {
+        loadSessions(e.target.value).then(() => renderChatPage());
+      }, 300);
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.target.id === 'globalSearch' && e.key === 'Enter') doSearch();
+    if (e.target.id === 'contactSearch' && e.key === 'Enter') searchContacts();
+  });
+}
+
+init();
+</script>
+</body>
+</html>
