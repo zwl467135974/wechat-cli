@@ -243,22 +243,39 @@ async function parseMessageRow(
   const compressContent = row[4];
   const status = Number(row[5]) || 0;
 
-  let content = "";
+  let rawText = "";
   if (rawContent instanceof Uint8Array || Buffer.isBuffer(rawContent)) {
-    const decoded = await decodeMessageContent(Buffer.from(rawContent));
-    if (!decoded || decoded.length === 0 || decoded.charCodeAt(0) < 0x20) {
-      content = getMediaTypeLabel(localType);
-    } else if (localType === 3 || localType === 43) {
-      content = getMediaTypeLabel(localType);
-    } else if (localType === 47) {
-      content = "[表情]";
-    } else if (localType === 34) {
-      content = "[语音]";
-    } else {
-      content = decoded;
-    }
+    rawText = await decodeMessageContent(Buffer.from(rawContent));
   } else if (rawContent != null) {
-    content = String(rawContent);
+    rawText = String(rawContent);
+  }
+
+  const isChatRoom = defaultTalker.endsWith("@chatroom");
+  let sender = "";
+  let isSelf = status === 2;
+  let content = rawText;
+
+  if (isChatRoom && rawText) {
+    const split = rawText.split(":\n", 2);
+    if (split.length === 2) {
+      sender = split[0];
+      content = split[1];
+      isSelf = false;
+    } else if (localType !== 10000) {
+      isSelf = true;
+    }
+  } else {
+    sender = defaultTalker;
+  }
+
+  if (!content || content.length === 0 || (content.charCodeAt(0) < 0x20)) {
+    content = getMediaTypeLabel(localType);
+  } else if (localType === 3 || localType === 43) {
+    content = getMediaTypeLabel(localType);
+  } else if (localType === 47) {
+    content = "[表情]";
+  } else if (localType === 34) {
+    content = "[语音]";
   }
 
   if (!content && localType !== 1 && localType !== 10000 && localType !== 10002) {
@@ -271,23 +288,6 @@ async function parseMessageRow(
 
   if (localType === 49 && content.includes("<")) {
     content = extractAppMessage(content);
-  }
-
-  const isChatRoom = defaultTalker.endsWith("@chatroom");
-  let sender = "";
-  let isSelf = status === 2;
-
-  if (isChatRoom) {
-    const split = content.split(":\n", 2);
-    if (split.length === 2) {
-      sender = split[0];
-      content = split[1];
-      isSelf = false;
-    } else if (localType !== 10000) {
-      isSelf = true;
-    }
-  } else {
-    sender = defaultTalker;
   }
 
   let mediaPath: string | undefined;
