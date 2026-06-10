@@ -12,6 +12,7 @@ import { closeAll } from "./db/manager.js";
 import { clearShardCache } from "./db/query-messages.js";
 import { execPython } from "./python/runner.js";
 import { getConfig } from "./config.js";
+import fs from "node:fs";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -180,7 +181,9 @@ async function startWebMode() {
         closeAll();
         clearShardCache();
         const cfg = getConfig();
-        await runDecrypt(cfg.wechatDbSrcPath, cfg.dataDir);
+        const absOutDir = path.resolve(cfg.dataDir);
+        if (!fs.existsSync(absOutDir)) fs.mkdirSync(absOutDir, { recursive: true });
+        await runDecrypt(cfg.wechatDbSrcPath, absOutDir);
         const ts = new Date().toISOString();
         globalThis.__wechatLastRefresh = ts;
         console.log(`[${ts}] Auto refresh completed`);
