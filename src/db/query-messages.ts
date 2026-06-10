@@ -74,10 +74,7 @@ export async function getMessages(
     allMessages.push(...msgs);
   }
 
-  allMessages.sort((a, b) => {
-    const diff = a.seq - b.seq;
-    return reverse ? -diff : diff;
-  });
+  allMessages.sort((a, b) => a.seq - b.seq);
 
   const result = allMessages.slice(0, limit);
   await resolveSenderNames(dataDir, result);
