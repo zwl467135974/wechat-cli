@@ -526,7 +526,8 @@ app.get("*", async (c) => {
     return c.json({ error: "Not found" }, 404);
   }
   const resolved = path.resolve(webDir, urlPath === "/" ? "index.html" : urlPath);
-  if (!resolved.startsWith(webDir)) {
+  const normalizedWebDir = path.normalize(webDir) + path.sep;
+  if (!path.normalize(resolved).startsWith(normalizedWebDir) && path.normalize(resolved) !== path.normalize(webDir)) {
     return c.json({ error: "Forbidden" }, 403);
   }
   if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
