@@ -9,7 +9,7 @@ import {
 } from "../db/query-messages.js";
 import { closeAll, findFilesByType } from "../db/manager.js";
 import { execPython } from "../python/runner.js";
-import { getConfig } from "../config.js";
+import { getConfig, saveEnvFile } from "../config.js";
 import {
   resolveImagePath,
   resolveCacheThumb,
@@ -68,7 +68,26 @@ app.get("/api/status", (c) => {
     tables,
     wechatPath: config.wechatPath || "not configured",
     wechatDbSrcPath: config.wechatDbSrcPath || "not configured",
+    hasImageKey: !!config.imageKey,
   });
+});
+
+app.post("/api/save-config", async (c) => {
+  const body = await c.req.json();
+  const mapping: Record<string, string> = {};
+  if (body.wechatDbSrcPath) mapping.WECHAT_DB_SRC_PATH = body.wechatDbSrcPath;
+  if (body.wechatPath) mapping.WECHAT_PATH = body.wechatPath;
+  if (body.wechatDbKey) mapping.WECHAT_DB_KEY = body.wechatDbKey;
+  if (body.imageKey) mapping.IMAGE_KEY = body.imageKey;
+  if (body.xorKey) mapping.XOR_KEY = body.xorKey;
+  saveEnvFile(mapping);
+  const config = getConfig();
+  if (body.wechatDbSrcPath) config.wechatDbSrcPath = body.wechatDbSrcPath;
+  if (body.wechatPath) config.wechatPath = body.wechatPath;
+  if (body.wechatDbKey) config.wechatDbKey = body.wechatDbKey;
+  if (body.imageKey) config.imageKey = body.imageKey;
+  if (body.xorKey) config.xorKey = body.xorKey;
+  return c.json({ success: true });
 });
 
 app.post("/api/decrypt", async (c) => {
@@ -80,6 +99,7 @@ app.post("/api/decrypt", async (c) => {
     out_dir: outDir,
   });
   closeAll();
+  statsCache = null;
 
   return c.json({ result });
 });
@@ -144,10 +164,17 @@ app.get("/api/search", async (c) => {
   return c.json(results);
 });
 
+let statsCache: { data: unknown; ts: number } | null = null;
+const STATS_TTL = 5 * 60 * 1000;
+
 app.get("/api/stats", async (c) => {
+  if (statsCache && Date.now() - statsCache.ts < STATS_TTL) {
+    return c.json(statsCache.data);
+  }
   const config = getConfig();
   try {
     const stats = await getGlobalStats(config.dataDir);
+    statsCache = { data: stats, ts: Date.now() };
     return c.json(stats);
   } catch (e: unknown) {
     return c.json({ error: (e as Error).message }, 500);

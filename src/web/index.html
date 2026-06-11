@@ -18,6 +18,7 @@
       <button class="nav-btn" data-page="setup">设置</button>
     </nav>
     <div class="header-actions">
+      <button class="theme-toggle" onclick="toggleTheme()" title="切换主题" id="themeBtn">&#9790;</button>
       <div class="status-badge" id="statusBadge">
         <span class="status-dot disconnected" id="statusDot"></span>
         <span id="statusText">加载中...</span>
@@ -93,8 +94,15 @@ function getInitial(name) {
 }
 
 function getTypeTag(type) {
-  const map = { 3:'image', 34:'voice', 43:'video', 47:'emoji', 49:'app', 10000:'system', 10002:'revoke' };
-  const labels = { image:'图片', voice:'语音', video:'视频', emoji:'表情', app:'应用', system:'系统', revoke:'撤回' };
+  const map = {
+    3:'image', 34:'voice', 43:'video', 47:'emoji', 48:'location', 49:'app',
+    10000:'system', 10002:'revoke',
+    50:'voip', 51:'videovoip', 10001:'pat'
+  };
+  const labels = {
+    image:'图片', voice:'语音', video:'视频', emoji:'表情', location:'位置',
+    app:'应用', system:'系统', revoke:'撤回', voip:'通话', videovoip:'视频通话', pat:'拍一拍'
+  };
   const t = map[type];
   if (!t) return '';
   return `<span class="message-type-tag tag-${t}">${labels[t]}</span>`;
@@ -111,7 +119,7 @@ function renderMessageContent(msg) {
   if (msg.type === 3) {
     if (msg.mediaPath) {
       const imgSrc = `${API}/api/image?path=${encodeURIComponent(msg.mediaPath)}&talker=${encodeURIComponent(msg.talker)}`;
-      bubble = `<div class="message-bubble image-bubble"><img class="chat-image" src="${imgSrc}" alt="[图片]" loading="lazy" onclick="openLightbox(this)" onerror="this.onerror=null;this.parentElement.innerHTML='<span class=\\'media-icon\\'>&#128247;</span> [图片]'"/></div>`;
+      bubble = `<div class="message-bubble image-bubble"><img class="chat-image" src="${imgSrc}" alt="[图片]" loading="lazy" onclick="openLightbox(this)" onerror="this.onerror=null;this.parentElement.innerHTML='<span class=\\'media-icon\\'>&#128247;</span> [图片] <a href=\\'javascript:void(0)\\' onclick=\\'event.stopPropagation();navigateTo(\"setup\")\\' style=\\'font-size:12px\\'>点击扫描图片密钥</a>'"/></div>`;
     } else {
       bubble = `<div class="message-bubble media-bubble"><span class="media-icon">&#128247;</span> ${escapeHtml(msg.content)}</div>`;
     }
@@ -365,6 +373,25 @@ window.toggleExportMenu = function() {
   if (!menu) return;
   menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
 };
+
+window.toggleTheme = function() {
+  const current = document.documentElement.getAttribute('data-theme');
+  const next = current === 'light' ? '' : 'light';
+  if (next) {
+    document.documentElement.setAttribute('data-theme', next);
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+  localStorage.setItem('theme', next || 'dark');
+  updateThemeBtn();
+};
+
+function updateThemeBtn() {
+  const btn = $('#themeBtn');
+  if (!btn) return;
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  btn.innerHTML = isLight ? '&#9788;' : '&#9790;';
+}
 
 document.addEventListener('click', function(e) {
   const menu = $('#exportMenu');
@@ -693,6 +720,14 @@ window.doDecrypt = async function() {
     });
     el.textContent = res.result;
     showToast('解密完成！');
+    const srcPath = $('#setupSrcPath')?.value;
+    if (srcPath) {
+      await api('/api/save-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wechatDbSrcPath: srcPath }),
+      });
+    }
     await checkStatus();
   } catch (e) {
     el.textContent = '错误: ' + e.message;
@@ -831,6 +866,10 @@ function renderPage() {
 }
 
 async function init() {
+  const saved = localStorage.getItem('theme');
+  if (saved) document.documentElement.setAttribute('data-theme', saved);
+  updateThemeBtn();
+
   await checkStatus();
 
   $$('.nav-btn').forEach(btn => {

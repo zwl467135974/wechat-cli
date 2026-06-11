@@ -1,7 +1,8 @@
-import { getSessions, getContacts } from "../db/query-contacts.js";
+import { getSessions, getContacts, getChatRoomMembers } from "../db/query-contacts.js";
 import {
   getMessages,
   searchMessages,
+  getGlobalStats,
 } from "../db/query-messages.js";
 import { closeAll } from "../db/manager.js";
 import { getConfig } from "../config.js";
@@ -165,6 +166,54 @@ export const toolDefinitions = [
       required: [],
     },
   },
+  {
+    name: "get_stats",
+    description:
+      "Get global statistics about all WeChat chat data. " +
+      "Returns total message count, session count, message type distribution, " +
+      "top 20 most active conversations, 24-hour activity histogram, and 30-day daily trend.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "get_chatroom_members",
+    description:
+      "Get the member list of a WeChat group chat (chatroom). " +
+      "Returns member wxid, nickname, and avatar URL for each member.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        chatroom: {
+          type: "string",
+          description: "The chatroom username (e.g., '12345678@chatroom')",
+        },
+      },
+      required: ["chatroom"],
+    },
+  },
+  {
+    name: "export_chat",
+    description:
+      "Export chat messages from a specific conversation in JSON, TXT, or HTML format. " +
+      "Returns up to 10000 messages.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        talker: {
+          type: "string",
+          description: "The talker's username/wxid to export",
+        },
+        format: {
+          type: "string",
+          description: "Export format: json, txt, or html (default: json)",
+        },
+      },
+      required: ["talker"],
+    },
+  },
 ];
 
 export async function handleToolCall(
@@ -295,6 +344,55 @@ export async function handleToolCall(
               text: JSON.stringify(contacts, null, 2),
             },
           ],
+        };
+      }
+
+      case "get_stats": {
+        const stats = await getGlobalStats(config.dataDir);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(stats, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "get_chatroom_members": {
+        const { chatroom } = args as { chatroom: string };
+        const members = await getChatRoomMembers(config.dataDir, chatroom);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(members, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "export_chat": {
+        const { talker, format } = args as {
+          talker: string;
+          format?: string;
+        };
+        const messages = await getMessages(config.dataDir, talker, {
+          limit: 10000,
+          reverse: true,
+        });
+        if ((format || "json") === "json") {
+          return {
+            content: [{ type: "text", text: JSON.stringify(messages, null, 2) }],
+          };
+        }
+        const lines = messages.map(m => {
+          const t = new Date(m.time).toLocaleString("zh-CN");
+          const sender = m.sender || m.talker;
+          return `[${t}] ${sender}: ${m.content}`;
+        });
+        return {
+          content: [{ type: "text", text: lines.join("\n") }],
         };
       }
 

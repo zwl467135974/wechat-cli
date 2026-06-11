@@ -155,12 +155,12 @@ async function startWebMode() {
   initConfig({
     dataDir,
     pythonPath,
-    wechatDbSrcPath: process.env.WECHAT_DB_SRC_PATH || "D:\\weixinDoc\\xwechat_files\\wxid_oofdngwmbpok21_1562\\db_storage",
-    wechatDbKey: process.env.WECHAT_DB_KEY || "",
-    wechatPath: process.env.WECHAT_PATH || "D:\\Weixin\\Weixin.exe",
-    wechatDataPath: process.env.WECHAT_DATA_PATH || "",
-    imageKey: process.env.IMAGE_KEY || "",
-    xorKey: process.env.XOR_KEY || "",
+    wechatDbSrcPath: process.env.WECHAT_DB_SRC_PATH,
+    wechatDbKey: process.env.WECHAT_DB_KEY,
+    wechatPath: process.env.WECHAT_PATH,
+    wechatDataPath: process.env.WECHAT_DATA_PATH,
+    imageKey: process.env.IMAGE_KEY,
+    xorKey: process.env.XOR_KEY,
   });
 
   serve(
