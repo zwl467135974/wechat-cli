@@ -94,11 +94,24 @@ export async function searchMessages(
     const db = await getConnection(shard.filePath);
     const tables = listMsgTables(db);
 
+    const talkerReverse = new Map<string, string>();
+    try {
+      const n2i = db.exec("SELECT user_name FROM Name2Id");
+      if (n2i.length > 0) {
+        for (const r of n2i[0].values) {
+          const name = String(r[0]);
+          talkerReverse.set(`Msg_${md5(name)}`, name);
+        }
+      }
+    } catch { /* ignore */ }
+
     for (const tableName of tables) {
+      const talker = talkerReverse.get(tableName) || tableName;
       const msgs = await searchInTable(
         db,
         tableName,
         keyword,
+        talker,
         limit,
         offset
       );
@@ -106,7 +119,7 @@ export async function searchMessages(
     }
   }
 
-  allMessages.sort((a, b) => a.seq - b.seq);
+  allMessages.sort((a, b) => b.seq - a.seq);
   const result = allMessages.slice(0, limit);
   await resolveSenderNames(dataDir, result);
   return result;
@@ -210,6 +223,7 @@ async function searchInTable(
   db: Database,
   tableName: string,
   keyword: string,
+  talker: string,
   limit: number,
   offset: number
 ): Promise<Message[]> {
@@ -224,7 +238,7 @@ async function searchInTable(
     if (rows.length === 0) return [];
 
     return await Promise.all(rows[0].values.map((row: unknown[]) =>
-      parseMessageRow(row, "unknown")
+      parseMessageRow(row, talker)
     ));
   } catch {
     return [];
@@ -270,6 +284,13 @@ async function parseMessageRow(
   }
 
   let emojiUrl: string | undefined;
+  let appType: number | undefined;
+  let appUrl: string | undefined;
+  let appThumbUrl: string | undefined;
+  let referContent: string | undefined;
+  let referSender: string | undefined;
+  let locationLabel: string | undefined;
+  let locationPoiName: string | undefined;
 
   if (!content || content.length === 0 || (content.charCodeAt(0) < 0x20)) {
     content = getMediaTypeLabel(localType);
@@ -295,6 +316,12 @@ async function parseMessageRow(
     content = "[表情]";
   } else if (localType === 34) {
     content = "[语音]";
+  } else if (localType === 48) {
+    const locMatch = content.match(/label="([^"]+)"/);
+    const poiMatch = content.match(/poiname="([^"]+)"/);
+    locationLabel = locMatch ? locMatch[1] : "";
+    locationPoiName = poiMatch ? poiMatch[1] : "";
+    content = locationPoiName || locationLabel || "[位置]";
   }
 
   if (!content && localType !== 1 && localType !== 10000 && localType !== 10002) {
@@ -306,7 +333,13 @@ async function parseMessageRow(
   }
 
   if (localType === 49 && content.includes("<")) {
-    content = extractAppMessage(content);
+    const appResult = extractAppMessage(content);
+    content = appResult.content;
+    appType = appResult.appType;
+    appUrl = appResult.appUrl;
+    appThumbUrl = appResult.appThumbUrl;
+    referContent = appResult.referContent;
+    referSender = appResult.referSender;
   }
 
   let mediaPath: string | undefined;
@@ -342,6 +375,13 @@ async function parseMessageRow(
     content,
     mediaPath,
     emojiUrl,
+    appType,
+    appUrl,
+    appThumbUrl,
+    referContent,
+    referSender,
+    locationLabel,
+    locationPoiName,
   };
 }
 
@@ -380,14 +420,74 @@ function extractSystemMessage(content: string): string {
   return content;
 }
 
-function extractAppMessage(content: string): string {
-  const titleMatch = content.match(/<title>([\s\S]*?)<\/title>/);
-  if (!titleMatch) return content;
+interface AppMessageResult {
+  content: string;
+  appType?: number;
+  appUrl?: string;
+  appThumbUrl?: string;
+  referContent?: string;
+  referSender?: string;
+}
+
+function extractAppMessage(raw: string): AppMessageResult {
+  const result: AppMessageResult = { content: raw };
+
+  const typeMatch = raw.match(/<type>(\d+)<\/type>/);
+  result.appType = typeMatch ? Number(typeMatch[1]) : undefined;
+
+  const titleMatch = raw.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
+  if (!titleMatch) return result;
   const title = titleMatch[1];
-  const descMatch = content.match(/<des>([\s\S]*?)<\/des>/);
+
+  const urlMatch = raw.match(/<url>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/url>/);
+  if (urlMatch) {
+    result.appUrl = decodeURIComponent(urlMatch[1]).replace(/&amp;/g, "&");
+    if (result.appUrl.startsWith("http://mp.weixin.qq.com")) {
+      result.appUrl = result.appUrl.replace("http://", "https://");
+    }
+  }
+
+  const thumbMatch = raw.match(/<thumburl>(?:<!\[CDATA\[)?(https?:\/\/[^\s<\]]+)/);
+  const coverMatch = raw.match(/<cover>(?:<!\[CDATA\[)?(https?:\/\/[^\s<\]]+)/);
+  result.appThumbUrl = thumbMatch?.[1] || coverMatch?.[1] || undefined;
+
+  const referMatch = raw.match(/<refermsg>([\s\S]*?)<\/refermsg>/);
+  if (referMatch) {
+    const refBlock = referMatch[1];
+    const refContentMatch = refBlock.match(/<content>([\s\S]*?)<\/content>/);
+    const refSenderMatch = refBlock.match(/<displayname>([\s\S]*?)<\/displayname>/);
+    result.referContent = refContentMatch ? refContentMatch[1].trim() : "";
+    result.referSender = refSenderMatch ? refSenderMatch[1].trim() : "";
+  }
+
+  if (result.appType === 57) {
+    const ref = result.referContent || "";
+    const sender = result.referSender || "";
+    result.content = title;
+    if (ref) {
+      result.content += `\n▎回复 ${sender}: ${ref.substring(0, 100)}${ref.length > 100 ? "..." : ""}`;
+    }
+    return result;
+  }
+
+  const descMatch = raw.match(/<des>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/des>/);
   const desc = descMatch && descMatch[1] ? descMatch[1].trim() : "";
-  if (desc) return `${title}\n${desc}`;
-  return title;
+
+  const typeLabels: Record<number, string> = {
+    5: "", 6: "[文件]", 8: "[动画表情]", 17: "[实时位置]",
+    21: "[名片]", 33: "[小程序]", 36: "[小程序]",
+    57: "", 62: "[视频号]", 63: "[视频号直播]", 76: "[视频号视频]",
+    87: "[群公告]", 88: "[红包]", 95: "[投票]", 109: "[游戏]",
+  };
+
+  const prefix = typeLabels[result.appType || 0] || "";
+  if (desc && desc.length < 200) {
+    result.content = `${prefix}${title}\n${desc}`;
+  } else {
+    result.content = prefix ? `${prefix} ${title}` : title;
+  }
+
+  return result;
 }
 
 interface PackedInfo {

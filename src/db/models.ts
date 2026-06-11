@@ -10,6 +10,13 @@ export interface Message {
   mediaPath?: string;
   mediaMd5?: string;
   emojiUrl?: string;
+  appType?: number;
+  appUrl?: string;
+  appThumbUrl?: string;
+  referContent?: string;
+  referSender?: string;
+  locationLabel?: string;
+  locationPoiName?: string;
 }
 
 export interface Session {

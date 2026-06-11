@@ -138,11 +138,18 @@ function renderMessageContent(msg) {
     } else {
       bubble = `<div class="message-bubble media-bubble"><span class="media-icon">&#128512;</span> ${escapeHtml(msg.content)}</div>`;
     }
+  } else if (msg.type === 48) {
+    bubble = `<div class="message-bubble location-bubble"><span class="media-icon">&#128205;</span> <span>${escapeHtml(msg.content)}</span></div>`;
   } else if (msg.type === 49) {
     const lines = msg.content.split('\n');
     const title = lines[0] || '[应用消息]';
     const desc = lines.slice(1).join('\n');
-    bubble = `<div class="message-bubble app-bubble"><div class="app-title">${escapeHtml(title)}</div>${desc ? `<div class="app-desc">${escapeHtml(desc)}</div>` : ''}</div>`;
+    const isReply = msg.appType === 57 && msg.referContent;
+    const link = msg.appUrl && msg.appType !== 57 ? `<a class="app-link" href="${escapeHtml(msg.appUrl)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : `<span>${escapeHtml(title)}</span>`;
+    const thumb = msg.appThumbUrl ? `<img class="app-thumb" src="${msg.appThumbUrl}" loading="lazy" onerror="this.remove()">` : '';
+    const refHtml = isReply ? `<div class="refer-block">▎${escapeHtml(msg.referSender || '')}: ${escapeHtml((msg.referContent || '').substring(0, 100))}</div>` : '';
+    const descHtml = desc && !isReply ? `<div class="app-desc">${escapeHtml(desc.substring(0, 200))}${desc.length > 200 ? '...' : ''}</div>` : '';
+    bubble = `<div class="message-bubble app-bubble">${thumb}${refHtml}<div class="app-title">${link}</div>${descHtml}</div>`;
   } else {
     const tag = getTypeTag(msg.type);
     bubble = `<div class="message-bubble">${escapeHtml(msg.content)}${tag}</div>`;
@@ -423,13 +430,14 @@ window.prevContacts = () => loadContacts($('#contactSearch')?.value, Math.max(0,
 
 function renderSearchPage() {
   const results = state.searchResults.map(r => {
-    const talkerName = r.talker || '';
+    const session = state.sessions.find(s => s.username === r.talker);
+    const talkerName = session ? (session.remark || session.nickname || session.alias || r.talker) : r.talker;
     const highlighted = r.content ? escapeHtml(r.content).replace(
       new RegExp(escapeRegex(escapeHtml(state.searchKeyword || '')), 'gi'),
       match => `<mark>${match}</mark>`
     ) : '';
     return `
-      <div class="search-result-item" data-talker="${escapeHtml(talkerName)}">
+      <div class="search-result-item" data-talker="${escapeHtml(r.talker)}">
         <div class="search-result-talk">${escapeHtml(talkerName)} ${getTypeTag(r.type)}</div>
         <div class="search-result-content">${highlighted}</div>
         <div class="search-result-time">${formatDate(r.time)}</div>
@@ -728,6 +736,7 @@ window.openLightbox = function(imgEl) {
     <div class="lightbox-toolbar">
       <div class="lightbox-counter">${currentIndex + 1} / ${images.length}</div>
       <button class="btn btn-secondary btn-sm" id="lightboxOriginal">查看原图</button>
+      <a class="btn btn-secondary btn-sm" id="lightboxDownload" download>保存</a>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -746,12 +755,18 @@ window.openLightbox = function(imgEl) {
     scale = 1;
     lightboxImg.style.transform = '';
     originalBtn.textContent = '查看原图';
+    viewingOriginal = false;
+    downloadBtn.href = images[idx];
+    downloadBtn.download = 'image_' + (idx + 1);
   }
 
   overlay.querySelector('.lightbox-close').onclick = () => overlay.remove();
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
 
   const originalBtn = overlay.querySelector('#lightboxOriginal');
+  const downloadBtn = overlay.querySelector('#lightboxDownload');
+  downloadBtn.href = imgEl.src;
+  downloadBtn.download = 'image_' + (currentIndex + 1);
   let viewingOriginal = false;
   originalBtn.onclick = (e) => {
     e.stopPropagation();
