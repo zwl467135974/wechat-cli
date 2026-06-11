@@ -269,11 +269,29 @@ async function parseMessageRow(
     sender = defaultTalker;
   }
 
+  let emojiUrl: string | undefined;
+
   if (!content || content.length === 0 || (content.charCodeAt(0) < 0x20)) {
     content = getMediaTypeLabel(localType);
   } else if (localType === 3 || localType === 43) {
     content = getMediaTypeLabel(localType);
   } else if (localType === 47) {
+    const cdnMatch = content.match(/cdnurl\s*=\s*"([^"]+)"/);
+    if (cdnMatch) {
+      emojiUrl = decodeURIComponent(cdnMatch[1]).replace(/&amp;/g, "&");
+    }
+    if (!emojiUrl) {
+      const thumbMatch = content.match(/thumburl\s*=\s*"([^"]+)"/);
+      if (thumbMatch) {
+        emojiUrl = decodeURIComponent(thumbMatch[1]).replace(/&amp;/g, "&");
+      }
+    }
+    if (!emojiUrl) {
+      const md5Match = content.match(/md5\s*=\s*"([0-9a-f]{32})"/i);
+      if (md5Match) {
+        emojiUrl = `emoji://${md5Match[1]}`;
+      }
+    }
     content = "[表情]";
   } else if (localType === 34) {
     content = "[语音]";
@@ -300,15 +318,15 @@ async function parseMessageRow(
   if (packedSource) {
     const packedInfo = parsePackedInfo(packedSource);
     if (packedInfo) {
-      if (localType === 3 && packedInfo.imageMd5) {
+      if (localType === 3 && (packedInfo.imageMd5 || packedInfo.videoMd5)) {
         const talkerMd5 = md5(defaultTalker);
         const date = new Date(createTime * 1000);
         const month = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-        mediaPath = path.join("msg", "attach", talkerMd5, month, "Img", packedInfo.imageMd5);
-      } else if (localType === 43 && packedInfo.videoMd5) {
+        mediaPath = path.join("msg", "attach", talkerMd5, month, "Img", packedInfo.imageMd5 || packedInfo.videoMd5 || "");
+      } else if (localType === 43 && (packedInfo.imageMd5 || packedInfo.videoMd5)) {
         const date = new Date(createTime * 1000);
         const month = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-        mediaPath = path.join("msg", "video", month, packedInfo.videoMd5);
+        mediaPath = path.join("msg", "video", month, packedInfo.videoMd5 || packedInfo.imageMd5 || "");
       }
     }
   }
@@ -323,6 +341,7 @@ async function parseMessageRow(
     type: localType,
     content,
     mediaPath,
+    emojiUrl,
   };
 }
 
@@ -379,43 +398,48 @@ interface PackedInfo {
 function parsePackedInfo(data: Buffer): PackedInfo | null {
   try {
     const result: PackedInfo = {};
-    let offset = 0;
-    while (offset < data.length) {
-      const byte = data[offset];
-      if (byte === undefined) break;
-      const fieldNum = byte >> 3;
-      const wireType = byte & 0x07;
-      offset++;
-
-      if (wireType === 2) {
-        const len = readVarint(data, offset);
-        if (len.value < 0 || offset + len.size + len.value > data.length) break;
-        const fieldData = data.subarray(offset + len.size, offset + len.size + len.value);
-        offset += len.size + len.value;
-
-        const text = fieldData.toString("utf-8").replace(/[^0-9a-fA-F]/g, "");
-        if (/^[0-9a-f]{32}$/i.test(text)) {
-          if (!result.imageMd5) {
-            result.imageMd5 = text;
-          } else {
-            result.videoMd5 = text;
-          }
-        }
-      } else if (wireType === 0) {
-        const v = readVarint(data, offset);
-        offset += v.size;
-      } else if (wireType === 1) {
-        offset += 8;
-      } else if (wireType === 5) {
-        offset += 4;
-      } else {
-        break;
-      }
-    }
+    extractHexIds(data, result);
     if (result.imageMd5 || result.videoMd5) return result;
     return null;
   } catch {
     return null;
+  }
+}
+
+function extractHexIds(data: Buffer, result: PackedInfo): void {
+  let offset = 0;
+  while (offset < data.length) {
+    const byte = data[offset];
+    if (byte === undefined) break;
+    const wireType = byte & 0x07;
+    offset++;
+
+    if (wireType === 2) {
+      const len = readVarint(data, offset);
+      if (len.value < 0 || offset + len.size + len.value > data.length) break;
+      const fieldData = data.subarray(offset + len.size, offset + len.size + len.value);
+      offset += len.size + len.value;
+
+      const text = fieldData.toString("utf-8");
+      if (/^[0-9a-f]{32}$/i.test(text)) {
+        if (!result.imageMd5) {
+          result.imageMd5 = text;
+        } else if (!result.videoMd5) {
+          result.videoMd5 = text;
+        }
+      } else if (fieldData.length > 2) {
+        extractHexIds(fieldData, result);
+      }
+    } else if (wireType === 0) {
+      const v = readVarint(data, offset);
+      offset += v.size;
+    } else if (wireType === 1) {
+      offset += 8;
+    } else if (wireType === 5) {
+      offset += 4;
+    } else {
+      break;
+    }
   }
 }
 
@@ -442,4 +466,191 @@ function readVarint(
 
 function md5(input: string): string {
   return crypto.createHash("md5").update(input).digest("hex");
+}
+
+export interface GlobalStats {
+  totalMessages: number;
+  totalContacts: number;
+  totalSessions: number;
+  totalChatrooms: number;
+  typeDistribution: { type: number; label: string; count: number }[];
+  topContacts: { username: string; nickname: string; count: number }[];
+  hourlyActivity: number[];
+  dailyActivity: { date: string; count: number }[];
+  dateRange: { earliest: string; latest: string };
+}
+
+export async function getGlobalStats(dataDir: string): Promise<GlobalStats> {
+  const shards = await getShards(dataDir);
+  let totalMessages = 0;
+  const typeCounts: Record<number, number> = {};
+  const talkerCounts: Record<string, number> = {};
+  const hourlyActivity = new Array(24).fill(0);
+  const dailyActivity: Record<string, number> = {};
+  let earliest = Infinity;
+  let latest = 0;
+
+  const typeLabels: Record<number, string> = {
+    1: "文本", 3: "图片", 34: "语音", 43: "视频",
+    47: "表情", 48: "位置", 49: "应用", 10000: "系统", 10002: "撤回",
+  };
+
+  for (const shard of shards) {
+    const db = await getConnection(shard.filePath);
+    const tables = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'");
+
+    if (tables.length === 0) continue;
+
+    const talkerReverse = new Map<string, string>();
+      try {
+        const n2i = db.exec("SELECT user_name, is_session FROM Name2Id");
+        if (n2i.length > 0) {
+          for (const r of n2i[0].values) {
+            talkerReverse.set(String(r[1]), String(r[0]));
+          }
+        }
+      } catch { /* ignore */ }
+
+    for (const tRow of tables[0].values) {
+      const tableName = String(tRow[0]);
+      try {
+        const countRow = db.exec(`SELECT COUNT(*) FROM "${tableName}"`);
+        if (countRow.length > 0) {
+          totalMessages += Number(countRow[0].values[0][0]);
+        }
+
+        const typeRows = db.exec(
+          `SELECT (local_type & 0xFFFF) AS mt, COUNT(*) AS c FROM "${tableName}" GROUP BY mt ORDER BY c DESC`
+        );
+        if (typeRows.length > 0) {
+          for (const r of typeRows[0].values) {
+            const mt = Number(r[0]);
+            typeCounts[mt] = (typeCounts[mt] || 0) + Number(r[1]);
+          }
+        }
+
+        const talkerRow = db.exec(
+          `SELECT MIN(create_time), MAX(create_time) FROM "${tableName}"`
+        );
+        if (talkerRow.length > 0 && talkerRow[0].values.length > 0) {
+          const minT = Number(talkerRow[0].values[0][0]);
+          const maxT = Number(talkerRow[0].values[0][1]);
+          if (minT && minT < earliest) earliest = minT;
+          if (maxT && maxT > latest) latest = maxT;
+        }
+
+        const hourlyRows = db.exec(
+          `SELECT CAST(strftime('%H', create_time, 'unixepoch', 'localtime') AS INTEGER) AS hr, COUNT(*) AS c FROM "${tableName}" GROUP BY hr`
+        );
+        if (hourlyRows.length > 0) {
+          for (const r of hourlyRows[0].values) {
+            hourlyActivity[Number(r[0])] += Number(r[1]);
+          }
+        }
+
+        const dailyRows = db.exec(
+          `SELECT strftime('%Y-%m-%d', create_time, 'unixepoch', 'localtime') AS d, COUNT(*) AS c FROM "${tableName}" GROUP BY d ORDER BY d`
+        );
+        if (dailyRows.length > 0) {
+          for (const r of dailyRows[0].values) {
+            const d = String(r[0]);
+            dailyActivity[d] = (dailyActivity[d] || 0) + Number(r[1]);
+          }
+        }
+
+        const tcRow = db.exec(`SELECT COUNT(*) FROM "${tableName}"`);
+        if (tcRow.length > 0) {
+          talkerCounts[tableName] = (talkerCounts[tableName] || 0) + Number(tcRow[0].values[0][0]);
+        }
+      } catch {
+        // skip unreadable tables
+      }
+    }
+  }
+
+  const sessionDbPath = findSingleFile(dataDir, "session");
+  let totalSessions = 0;
+  let totalChatrooms = 0;
+  if (sessionDbPath) {
+    try {
+      const sdb = await getConnection(sessionDbPath);
+      const sr = sdb.exec("SELECT COUNT(*) FROM SessionTable WHERE is_hidden = 0");
+      if (sr.length > 0) totalSessions = Number(sr[0].values[0][0]);
+      const cr = sdb.exec("SELECT COUNT(*) FROM SessionTable WHERE is_hidden = 0 AND username LIKE '%@chatroom'");
+      if (cr.length > 0) totalChatrooms = Number(cr[0].values[0][0]);
+    } catch { /* ignore */ }
+  }
+
+  const contactDbPath = findSingleFile(dataDir, "contact");
+  let totalContacts = 0;
+  if (contactDbPath) {
+    try {
+      const cdb = await getConnection(contactDbPath);
+      const cr = cdb.exec("SELECT COUNT(*) FROM Contact");
+      if (cr.length > 0) totalContacts = Number(cr[0].values[0][0]);
+    } catch { /* ignore */ }
+  }
+
+  const typeDistribution = Object.entries(typeCounts)
+    .map(([t, c]) => ({ type: Number(t), label: typeLabels[Number(t)] || `类型${t}`, count: c }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+
+  const topContactList = Object.entries(talkerCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 20)
+    .map(([tableName, count]) => ({ username: tableName, nickname: "", count }));
+
+  if (topContactList.length > 0) {
+    const sessionDbPath = findSingleFile(dataDir, "session");
+    const talkerToTable = new Map<string, string>();
+    if (sessionDbPath) {
+      try {
+        const sdb = await getConnection(sessionDbPath);
+        const sRows = sdb.exec("SELECT username FROM SessionTable WHERE is_hidden = 0");
+        if (sRows.length > 0) {
+          for (const r of sRows[0].values) {
+            const uname = String(r[0]);
+            talkerToTable.set(`Msg_${md5(uname)}`, uname);
+          }
+        }
+      } catch { /* ignore */ }
+    }
+    const wxids = [];
+    for (const c of topContactList) {
+      const resolved = talkerToTable.get(c.username);
+      if (resolved) {
+        c.username = resolved;
+        wxids.push(resolved);
+      }
+    }
+    if (wxids.length > 0) {
+      const map = await loadContactMap(dataDir, wxids);
+      for (const c of topContactList) {
+        if (talkerToTable.has(`Msg_${md5(c.username)}`)) {
+          const info = map.get(c.username);
+          if (info) c.nickname = info.remark || info.nickname || c.username;
+        }
+      }
+    }
+  }
+
+  const dailyArray = Object.entries(dailyActivity)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, count]) => ({ date, count }));
+
+  return {
+    totalMessages,
+    totalContacts,
+    totalSessions,
+    totalChatrooms,
+    typeDistribution,
+    topContacts: topContactList,
+    hourlyActivity,
+    dailyActivity: dailyArray,
+    dateRange: {
+      earliest: earliest === Infinity ? "" : new Date(earliest * 1000).toISOString(),
+      latest: latest === 0 ? "" : new Date(latest * 1000).toISOString(),
+    },
+  };
 }

@@ -25,8 +25,8 @@ export async function getContacts(
             COALESCE(big_head_url,'') as big_head_url
            FROM contact`;
     if (keyword) {
-      sql += ` WHERE username = ? OR alias = ? OR remark = ? OR nick_name = ?`;
-      params = [keyword, keyword, keyword, keyword];
+      sql += ` WHERE username LIKE ? OR alias LIKE ? OR remark LIKE ? OR nick_name LIKE ?`;
+      params = [`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`];
     }
   } else {
     sql = `SELECT UserName, 0 as local_type, Alias, Remark, NickName,
@@ -34,8 +34,8 @@ export async function getContacts(
             COALESCE(BigHeadImgUrl,'') as big_head_url
            FROM Contact`;
     if (keyword) {
-      sql += ` WHERE UserName = ? OR Alias = ? OR Remark = ? OR NickName = ?`;
-      params = [keyword, keyword, keyword, keyword];
+      sql += ` WHERE UserName LIKE ? OR Alias LIKE ? OR Remark LIKE ? OR NickName LIKE ?`;
+      params = [`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`];
     }
   }
 
@@ -130,7 +130,7 @@ export async function getSessions(
   const usernames = rows[0].values.map((row: unknown[]) => String(row[0]));
   const contactMap = await loadContactMap(dataDir, usernames);
 
-  return rows[0].values.map((row: unknown[]) => {
+  let results = rows[0].values.map((row: unknown[]) => {
     const username = String(row[0]);
     const contact = contactMap.get(username);
     const isSystem = isSystemAccount(username);
@@ -147,6 +147,18 @@ export async function getSessions(
       isHidden: isSystem || Number(row[4]) === 1,
     };
   }).filter(s => !s.isHidden);
+
+  if (keyword) {
+    const kw = keyword.toLowerCase();
+    results = results.filter(s => {
+      const nickname = (s.nickname || "").toLowerCase();
+      const remark = (s.remark || "").toLowerCase();
+      return nickname.includes(kw) || remark.includes(kw) ||
+        s.username.toLowerCase().includes(kw) || (s.lastMessage || "").toLowerCase().includes(kw);
+    });
+  }
+
+  return results;
 }
 
 export async function loadContactMap(

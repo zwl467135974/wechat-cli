@@ -495,6 +495,10 @@ body {
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
 }
 
+.grid-4 {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
 .card {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
@@ -559,6 +563,15 @@ body {
   justify-content: center;
   font-size: 20px;
   color: white;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.contact-avatar-img {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
   flex-shrink: 0;
 }
 
@@ -850,4 +863,93 @@ body {
 
 .chat-image:hover {
   opacity: 0.9;
+}
+
+.chat-video {
+  max-width: 320px;
+  max-height: 240px;
+  border-radius: var(--radius);
+  display: block;
+  background: #000;
+}
+
+.emoji-bubble {
+  padding: 4px !important;
+  max-width: 200px;
+  background: transparent !important;
+}
+
+.chat-emoji {
+  max-width: 100%;
+  max-height: 150px;
+  display: block;
+}
+
+.lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  cursor: pointer;
+}
+
+.lightbox-img {
+  max-width: 90vw;
+  max-height: 90vh;
+  object-fit: contain;
+  transition: transform 0.15s ease;
+  cursor: default;
+}
+
+.lightbox-close {
+  position: absolute;
+  top: 16px;
+  right: 24px;
+  font-size: 36px;
+  color: white;
+  cursor: pointer;
+  z-index: 2001;
+  line-height: 1;
+  opacity: 0.8;
+}
+
+.lightbox-close:hover {
+  opacity: 1;
+}
+
+.lightbox-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 48px;
+  color: white;
+  cursor: pointer;
+  z-index: 2001;
+  opacity: 0.6;
+  user-select: none;
+  padding: 16px;
+}
+
+.lightbox-nav:hover {
+  opacity: 1;
+}
+
+.lightbox-prev {
+  left: 16px;
+}
+
+.lightbox-next {
+  right: 16px;
+}
+
+.lightbox-counter {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: rgba(255,255,255,0.7);
+  font-size: 14px;
 }

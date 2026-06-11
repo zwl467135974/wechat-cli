@@ -5,6 +5,7 @@ import { getSessions, getContacts } from "../db/query-contacts.js";
 import {
   getMessages,
   searchMessages,
+  getGlobalStats,
 } from "../db/query-messages.js";
 import { closeAll, findFilesByType } from "../db/manager.js";
 import { execPython } from "../python/runner.js";
@@ -12,6 +13,7 @@ import { getConfig } from "../config.js";
 import {
   resolveImagePath,
   resolveCacheThumb,
+  resolveVideoPath,
   decryptImage,
   scanImageKey,
   getImageKeyStatus,
@@ -142,6 +144,16 @@ app.get("/api/search", async (c) => {
   return c.json(results);
 });
 
+app.get("/api/stats", async (c) => {
+  const config = getConfig();
+  try {
+    const stats = await getGlobalStats(config.dataDir);
+    return c.json(stats);
+  } catch (e: unknown) {
+    return c.json({ error: (e as Error).message }, 500);
+  }
+});
+
 app.get("/api/image", async (c) => {
   const mediaPath = c.req.query("path");
   const talker = c.req.query("talker");
@@ -160,8 +172,20 @@ app.get("/api/image", async (c) => {
 
   const decrypted = await decryptImage(datPath);
   if (decrypted) {
-    const fmt = datPath.toLowerCase();
-    const mime = fmt.includes(".png") ? "image/png" : fmt.includes(".webp") ? "image/webp" : "image/jpeg";
+    const prefix = decrypted.subarray(0, 4).toString('ascii');
+    let mime = "image/jpeg";
+    if (prefix === "\x89PNG") mime = "image/png";
+    else if (prefix === "RIFF") mime = "image/webp";
+    else if (prefix === "GIF8") mime = "image/gif";
+    else if (prefix === "wxgf") {
+      if (decrypted.length > 20) {
+        const inner = decrypted.subarray(16);
+        const innerPfx = inner.subarray(0, 4).toString('ascii');
+        if (innerPfx === "RIFF") mime = "image/webp";
+        else if (innerPfx === "\x89PNG") mime = "image/png";
+        else if (innerPfx.substring(0, 3) === "\xff\xd8\xff") mime = "image/jpeg";
+      }
+    }
     return new Response(new Uint8Array(decrypted), {
       headers: {
         "Content-Type": mime,
@@ -171,6 +195,82 @@ app.get("/api/image", async (c) => {
   }
 
   return c.json({ error: "Image decryption key not available", keyStatus: getImageKeyStatus() }, 503);
+});
+
+app.get("/api/emoji", async (c) => {
+  const md5 = c.req.query("md5");
+  if (!md5 || !/^[0-9a-f]{32}$/i.test(md5)) {
+    return c.json({ error: "Invalid md5" }, 400);
+  }
+
+  const config = getConfig();
+  const srcRoot = path.dirname(config.wechatDbSrcPath);
+  const prefix = md5.substring(0, 2);
+
+  const paths = [
+    path.join(srcRoot, "business", "emoticon", "Persist", prefix, md5),
+    path.join(srcRoot, "cache", new Date().getFullYear() + "-" + String(new Date().getMonth() + 1).padStart(2, "0"), "Emoticon", prefix, md5),
+  ];
+
+  for (const p of paths) {
+    if (fs.existsSync(p)) {
+      const data = fs.readFileSync(p);
+      return new Response(data, {
+        headers: {
+          "Content-Type": "image/gif",
+          "Cache-Control": "public, max-age=86400",
+        },
+      });
+    }
+  }
+
+  return c.json({ error: "Emoji not found" }, 404);
+});
+
+app.get("/api/video", async (c) => {
+  const mediaPath = c.req.query("path");
+  if (!mediaPath) {
+    return c.json({ error: "path is required" }, 400);
+  }
+
+  const config = getConfig();
+  const videoPath = resolveVideoPath(config.wechatDbSrcPath, mediaPath);
+
+  if (!videoPath) {
+    return c.json({ error: "Video file not found" }, 404);
+  }
+
+  const stat = fs.statSync(videoPath);
+  const range = c.req.header("Range");
+
+  if (range) {
+    const parts = range.replace(/bytes=/, "").split("-");
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+    const chunkSize = end - start + 1;
+
+    const stream = fs.createReadStream(videoPath, { start, end });
+    return new Response(stream as any, {
+      status: 206,
+      headers: {
+        "Content-Range": `bytes ${start}-${end}/${stat.size}`,
+        "Accept-Ranges": "bytes",
+        "Content-Length": String(chunkSize),
+        "Content-Type": "video/mp4",
+        "Cache-Control": "public, max-age=3600",
+      },
+    });
+  }
+
+  const stream = fs.createReadStream(videoPath);
+  return new Response(stream as any, {
+    headers: {
+      "Content-Type": "video/mp4",
+      "Content-Length": String(stat.size),
+      "Accept-Ranges": "bytes",
+      "Cache-Control": "public, max-age=3600",
+    },
+  });
 });
 
 app.get("/api/image-key", (c) => {

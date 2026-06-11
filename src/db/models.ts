@@ -9,6 +9,7 @@ export interface Message {
   content: string;
   mediaPath?: string;
   mediaMd5?: string;
+  emojiUrl?: string;
 }
 
 export interface Session {

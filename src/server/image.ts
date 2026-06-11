@@ -39,6 +39,33 @@ export function resolveImagePath(
   return null;
 }
 
+export function resolveVideoPath(
+  srcPath: string,
+  mediaPath: string
+): string | null {
+  if (!srcPath) return null;
+
+  const srcRoot = path.dirname(srcPath);
+  const extensions = [".mp4", ".dat", ""];
+  for (const ext of extensions) {
+    const fullPath = path.join(srcRoot, mediaPath + ext);
+    if (fs.existsSync(fullPath)) return fullPath;
+  }
+
+  const videoDir = path.dirname(path.join(srcRoot, mediaPath));
+  if (fs.existsSync(videoDir)) {
+    const baseName = path.basename(mediaPath);
+    const files = fs.readdirSync(videoDir);
+    for (const f of files) {
+      if (f.startsWith(baseName)) {
+        return path.join(videoDir, f);
+      }
+    }
+  }
+
+  return null;
+}
+
 export function resolveCacheThumb(
   srcPath: string,
   talker: string,

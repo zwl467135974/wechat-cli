@@ -67,6 +67,10 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function formatTime(iso) {
   if (!iso) return '';
   const d = new Date(iso);
@@ -107,16 +111,33 @@ function renderMessageContent(msg) {
   if (msg.type === 3) {
     if (msg.mediaPath) {
       const imgSrc = `${API}/api/image?path=${encodeURIComponent(msg.mediaPath)}&talker=${encodeURIComponent(msg.talker)}`;
-      bubble = `<div class="message-bubble image-bubble"><img class="chat-image" src="${imgSrc}" alt="[图片]" loading="lazy" onerror="this.onerror=null;this.parentElement.innerHTML='<span class=\\'media-icon\\'>&#128247;</span> [图片]'"/></div>`;
+      bubble = `<div class="message-bubble image-bubble"><img class="chat-image" src="${imgSrc}" alt="[图片]" loading="lazy" onclick="openLightbox(this)" onerror="this.onerror=null;this.parentElement.innerHTML='<span class=\\'media-icon\\'>&#128247;</span> [图片]'"/></div>`;
     } else {
       bubble = `<div class="message-bubble media-bubble"><span class="media-icon">&#128247;</span> ${escapeHtml(msg.content)}</div>`;
     }
   } else if (msg.type === 34) {
     bubble = `<div class="message-bubble media-bubble"><span class="media-icon">&#127908;</span> ${escapeHtml(msg.content)}</div>`;
   } else if (msg.type === 43) {
-    bubble = `<div class="message-bubble media-bubble"><span class="media-icon">&#127909;</span> ${escapeHtml(msg.content)}</div>`;
+    if (msg.mediaPath) {
+      const videoSrc = `${API}/api/video?path=${encodeURIComponent(msg.mediaPath)}`;
+      bubble = `<div class="message-bubble image-bubble"><video class="chat-video" src="${videoSrc}" controls preload="metadata" onerror="this.onerror=null;this.outerHTML='<div class=\\'message-bubble media-bubble\\'><span class=\\'media-icon\\'>&#127909;</span> [视频]</div>'"></video></div>`;
+    } else {
+      bubble = `<div class="message-bubble media-bubble"><span class="media-icon">&#127909;</span> ${escapeHtml(msg.content)}</div>`;
+    }
   } else if (msg.type === 47) {
-    bubble = `<div class="message-bubble media-bubble"><span class="media-icon">&#128512;</span> ${escapeHtml(msg.content)}</div>`;
+    let emojiSrc = '';
+    if (msg.emojiUrl) {
+      if (msg.emojiUrl.startsWith('emoji://')) {
+        emojiSrc = `${API}/api/emoji?md5=${encodeURIComponent(msg.emojiUrl.replace('emoji://', ''))}`;
+      } else {
+        emojiSrc = msg.emojiUrl;
+      }
+    }
+    if (emojiSrc) {
+      bubble = `<div class="message-bubble emoji-bubble"><img class="chat-emoji" src="${emojiSrc}" alt="[表情]" loading="lazy" onerror="this.onerror=null;this.parentElement.innerHTML='<span class=\\'media-icon\\'>&#128512;</span> [表情]'"/></div>`;
+    } else {
+      bubble = `<div class="message-bubble media-bubble"><span class="media-icon">&#128512;</span> ${escapeHtml(msg.content)}</div>`;
+    }
   } else if (msg.type === 49) {
     const lines = msg.content.split('\n');
     const title = lines[0] || '[应用消息]';
@@ -273,9 +294,12 @@ window.loadOlder = async function() {
 function renderContactsPage() {
   const cards = state.contacts.map(c => {
     const name = c.remark || c.nickname || c.alias || c.username;
+    const avatar = c.smallHeadUrl
+      ? `<img class="contact-avatar-img" src="${c.smallHeadUrl}" alt="" loading="lazy" onerror="this.outerHTML='<div class=\\'contact-avatar\\'>${getInitial(name)}</div>'">`
+      : `<div class="contact-avatar">${getInitial(name)}</div>`;
     return `
       <div class="contact-card" data-username="${escapeHtml(c.username)}">
-        <div class="contact-avatar">${getInitial(name)}</div>
+        ${avatar}
         <div>
           <div class="contact-name">${escapeHtml(name)}</div>
           ${c.remark ? `<div class="contact-remark">${escapeHtml(c.remark)}</div>` : ''}
@@ -326,7 +350,7 @@ function renderSearchPage() {
   const results = state.searchResults.map(r => {
     const talkerName = r.talker || '';
     const highlighted = r.content ? escapeHtml(r.content).replace(
-      new RegExp(escapeHtml(state.searchKeyword || ''), 'gi'),
+      new RegExp(escapeRegex(escapeHtml(state.searchKeyword || '')), 'gi'),
       match => `<mark>${match}</mark>`
     ) : '';
     return `
@@ -381,73 +405,122 @@ window.nextSearch = () => doSearch(state.searchKeyword, state.searchOffset + 50)
 window.prevSearch = () => doSearch(state.searchKeyword, Math.max(0, state.searchOffset - 50));
 
 function renderDashboard() {
-  const totalSessions = state.sessions.length;
-  const totalContacts = state.contacts.length;
-  const chatrooms = state.sessions.filter(s => s.username.endsWith('@chatroom')).length;
-  const personal = totalSessions - chatrooms;
-
-  const topSenders = {};
-  state.messages.forEach(m => {
-    const s = m.sender || m.talker;
-    topSenders[s] = (topSenders[s] || 0) + 1;
-  });
-  const topList = Object.entries(topSenders).sort((a,b) => b[1] - a[1]).slice(0, 10);
-  const maxCount = topList.length > 0 ? topList[0][1] : 1;
-
-  const typeCounts = {};
-  state.messages.forEach(m => {
-    const types = { 1:'文本', 3:'图片', 34:'语音', 43:'视频', 47:'表情', 49:'应用', 10000:'系统' };
-    const t = types[m.type] || '其他';
-    typeCounts[t] = (typeCounts[t] || 0) + 1;
-  });
-  const typeColors = { '文本':'#3b82f6', '图片':'#22c55e', '语音':'#f97316', '视频':'#a855f7', '表情':'#eab308', '应用':'#06b6d4', '系统':'#64748b', '其他':'#94a3b8' };
-
-  const typeBarHtml = Object.entries(typeCounts).sort((a,b) => b[1]-a[1]).map(([type, count]) => {
-    const pct = state.messages.length > 0 ? (count/state.messages.length*100) : 0;
-    return `
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-        <span style="width:50px;font-size:13px;color:var(--text-secondary)">${type}</span>
-        <div class="stat-bar" style="flex:1"><div class="stat-bar-fill" style="width:${pct}%;background:${typeColors[type]||'#3b82f6'}"></div></div>
-        <span style="width:50px;font-size:13px;text-align:right;color:var(--text-muted)">${count}</span>
-      </div>`;
-  }).join('');
-
-  const topListHtml = topList.map(([name, count], i) => {
-    const pct = (count / maxCount) * 100;
-    return `
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-        <span style="width:24px;font-size:13px;color:var(--text-muted)">${i+1}</span>
-        <span style="width:120px;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(name)}</span>
-        <div class="stat-bar" style="flex:1"><div class="stat-bar-fill" style="width:${pct}%;background:var(--accent)"></div></div>
-        <span style="width:50px;font-size:13px;text-align:right;color:var(--text-muted)">${count}</span>
-      </div>`;
-  }).join('');
-
   mainContent().innerHTML = `
     <div class="page-container">
       <h1 class="page-title">数据统计</h1>
-      <div class="grid grid-3" style="margin-bottom:24px">
-        <div class="card">
-          <div class="card-title">总会话数</div>
-          <div class="card-value">${totalSessions}</div>
-        </div>
-        <div class="card">
-          <div class="card-title">私聊</div>
-          <div class="card-value">${personal}</div>
-        </div>
-        <div class="card">
-          <div class="card-title">群聊</div>
-          <div class="card-value">${chatrooms}</div>
+      <div id="statsContent" style="text-align:center;padding:60px 0;color:var(--text-muted)">加载中...</div>
+    </div>`;
+  loadAndRenderStats();
+}
+
+async function loadAndRenderStats() {
+  let stats;
+  try {
+    stats = await api('/api/stats');
+  } catch (e) {
+    $('#statsContent').innerHTML = `<div style="color:var(--danger)">加载失败: ${e.message}</div>`;
+    return;
+  }
+
+  const personal = stats.totalSessions - stats.totalChatrooms;
+  const maxHour = Math.max(...stats.hourlyActivity, 1);
+
+  const hourBars = stats.hourlyActivity.map((c, i) => {
+    const pct = (c / maxHour) * 100;
+    return `<div style="display:flex;align-items:flex-end;gap:4px;height:80px">
+      <div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%">
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px">${c > 0 ? c : ''}</div>
+        <div style="width:100%;background:var(--accent);border-radius:3px 3px 0 0;height:${pct}%;min-height:2px;transition:height 0.3s"></div>
+      </div>
+    </div>`;
+  }).join('');
+
+  const hourLabels = Array.from({length:24}, (_, i) => 
+    `<div style="flex:1;text-align:center;font-size:10px;color:var(--text-muted)">${i}</div>`
+  ).join('');
+
+  const maxDaily = Math.max(...stats.dailyActivity.map(d => d.count), 1);
+  const recentDays = stats.dailyActivity.slice(-30);
+  const maxRecent = Math.max(...recentDays.map(d => d.count), 1);
+
+  const dailyBars = recentDays.map(d => {
+    const pct = (d.count / maxRecent) * 100;
+    return `<div title="${d.date}: ${d.count}条" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:60px">
+      <div style="width:100%;background:var(--purple);border-radius:2px 2px 0 0;height:${pct}%;min-height:1px"></div>
+    </div>`;
+  }).join('');
+
+  const typeColors = {'文本':'#3b82f6','图片':'#22c55e','语音':'#f97316','视频':'#a855f7','表情':'#eab308','应用':'#06b6d4','系统':'#64748b','撤回':'#ef4444'};
+  const typeTotal = stats.typeDistribution.reduce((s, t) => s + t.count, 0) || 1;
+  const typeBarHtml = stats.typeDistribution.map(t => {
+    const pct = ((t.count / typeTotal) * 100).toFixed(1);
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <span style="width:50px;font-size:13px;color:var(--text-secondary)">${t.label}</span>
+      <div class="stat-bar" style="flex:1"><div class="stat-bar-fill" style="width:${pct}%;background:${typeColors[t.label]||'#3b82f6'}"></div></div>
+      <span style="width:70px;font-size:13px;text-align:right;color:var(--text-muted)">${t.count.toLocaleString()} (${pct}%)</span>
+    </div>`;
+  }).join('');
+
+  const maxTop = stats.topContacts.length > 0 ? stats.topContacts[0].count : 1;
+  const topHtml = stats.topContacts.slice(0, 15).map((c, i) => {
+    const pct = (c.count / maxTop) * 100;
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <span style="width:24px;font-size:13px;color:var(--text-muted)">${i+1}</span>
+      <span style="width:120px;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(c.nickname || c.username)}</span>
+      <div class="stat-bar" style="flex:1"><div class="stat-bar-fill" style="width:${pct}%;background:var(--accent)"></div></div>
+      <span style="width:60px;font-size:13px;text-align:right;color:var(--text-muted)">${c.count.toLocaleString()}</span>
+    </div>`;
+  }).join('');
+
+  const earliest = stats.dateRange.earliest ? new Date(stats.dateRange.earliest).toLocaleDateString('zh-CN') : '-';
+  const latest = stats.dateRange.latest ? new Date(stats.dateRange.latest).toLocaleDateString('zh-CN') : '-';
+
+  $('#statsContent').innerHTML = `
+    <div class="grid grid-4" style="margin-bottom:24px">
+      <div class="card">
+        <div class="card-title">总消息数</div>
+        <div class="card-value">${stats.totalMessages.toLocaleString()}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">会话数</div>
+        <div class="card-value">${stats.totalSessions}</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">私聊 ${personal} / 群聊 ${stats.totalChatrooms}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">联系人</div>
+        <div class="card-value">${stats.totalContacts.toLocaleString()}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">时间跨度</div>
+        <div class="card-value" style="font-size:16px">${earliest} ~ ${latest}</div>
+      </div>
+    </div>
+    <div class="grid grid-2" style="margin-bottom:24px">
+      <div class="card">
+        <div class="card-title">消息类型分布</div>
+        <div style="margin-top:12px">${typeBarHtml || '<div style="color:var(--text-muted)">暂无数据</div>'}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">最活跃会话 TOP 15</div>
+        <div style="margin-top:12px">${topHtml || '<div style="color:var(--text-muted)">暂无数据</div>'}</div>
+      </div>
+    </div>
+    <div class="grid grid-2">
+      <div class="card">
+        <div class="card-title">24小时活跃度</div>
+        <div style="margin-top:12px">
+          <div style="display:flex;gap:2px;align-items:flex-end;height:80px">${hourBars}</div>
+          <div style="display:flex;gap:2px;margin-top:4px">${hourLabels}</div>
         </div>
       </div>
-      <div class="grid grid-2">
-        <div class="card">
-          <div class="card-title">消息类型分布</div>
-          <div style="margin-top:12px">${typeBarHtml || '<div style="color:var(--text-muted)">选择会话后查看统计</div>'}</div>
-        </div>
-        <div class="card">
-          <div class="card-title">发送者排行</div>
-          <div style="margin-top:12px">${topListHtml || '<div style="color:var(--text-muted)">选择会话后查看排行</div>'}</div>
+      <div class="card">
+        <div class="card-title">近30天消息趋势</div>
+        <div style="margin-top:12px">
+          <div style="display:flex;gap:2px;align-items:flex-end;height:60px">${dailyBars}</div>
+          <div style="display:flex;justify-content:space-between;margin-top:4px">
+            <span style="font-size:10px;color:var(--text-muted)">${recentDays.length > 0 ? recentDays[0].date : ''}</span>
+            <span style="font-size:10px;color:var(--text-muted)">${recentDays.length > 0 ? recentDays[recentDays.length-1].date : ''}</span>
+          </div>
         </div>
       </div>
     </div>`;
@@ -481,6 +554,13 @@ function renderSetupPage() {
           </div>
           <button class="btn btn-primary" onclick="doDecrypt()">开始解密</button>
           <div id="decryptResult" class="log-output" style="margin-top:12px;display:none"></div>
+        </div>
+
+        <div class="setup-step">
+          <h3><span class="step-number">2.5</span> 扫描图片密钥</h3>
+          <p style="color:var(--text-secondary);margin-bottom:12px">如需查看图片，需先扫描微信进程内存获取图片解密密钥。请确保微信正在运行且已查看过部分图片。</p>
+          <button class="btn btn-primary" onclick="doScanImageKey()">扫描图片密钥</button>
+          <div id="imageKeyResult" class="log-output" style="margin-top:12px;display:none"></div>
         </div>
 
         <div class="setup-step">
@@ -536,9 +616,80 @@ window.doDecrypt = async function() {
   }
 };
 
+window.doScanImageKey = async function() {
+  const el = $('#imageKeyResult');
+  el.style.display = 'block';
+  el.textContent = '正在扫描微信进程内存...';
+  try {
+    const res = await api('/api/scan-image-key', { method: 'POST' });
+    if (res.success) {
+      el.textContent = `扫描成功！密钥: ${res.key}，XOR密钥: ${res.xor_key}`;
+      showToast('图片密钥扫描成功！');
+    } else {
+      el.textContent = `扫描失败: ${res.error}`;
+    }
+  } catch (e) {
+    el.textContent = '错误: ' + e.message;
+  }
+};
+
 function updateNav() {
   $$('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.page === state.page));
 }
+
+window.openLightbox = function(imgEl) {
+  const container = $('#messagesContainer');
+  const allImages = container ? Array.from(container.querySelectorAll('.chat-image')) : [];
+  const currentIndex = allImages.indexOf(imgEl);
+  const images = allImages.map(i => i.src);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'lightbox-overlay';
+  overlay.innerHTML = `
+    <div class="lightbox-close">&times;</div>
+    ${images.length > 1 ? '<div class="lightbox-nav lightbox-prev">&#8249;</div>' : ''}
+    <img class="lightbox-img" src="${imgEl.src}" alt="">
+    ${images.length > 1 ? '<div class="lightbox-nav lightbox-next">&#8250;</div>' : ''}
+    <div class="lightbox-counter">${currentIndex + 1} / ${images.length}</div>
+  `;
+  document.body.appendChild(overlay);
+
+  let idx = currentIndex;
+  const lightboxImg = overlay.querySelector('.lightbox-img');
+  const counter = overlay.querySelector('.lightbox-counter');
+  let scale = 1;
+
+  function showImage(newIdx) {
+    if (newIdx < 0) newIdx = images.length - 1;
+    if (newIdx >= images.length) newIdx = 0;
+    idx = newIdx;
+    lightboxImg.src = images[idx];
+    counter.textContent = `${idx + 1} / ${images.length}`;
+    scale = 1;
+    lightboxImg.style.transform = '';
+  }
+
+  overlay.querySelector('.lightbox-close').onclick = () => overlay.remove();
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  const prev = overlay.querySelector('.lightbox-prev');
+  const next = overlay.querySelector('.lightbox-next');
+  if (prev) prev.onclick = (e) => { e.stopPropagation(); showImage(idx - 1); };
+  if (next) next.onclick = (e) => { e.stopPropagation(); showImage(idx + 1); };
+
+  overlay.onwheel = (e) => {
+    e.preventDefault();
+    scale += e.deltaY < 0 ? 0.2 : -0.2;
+    scale = Math.max(0.2, Math.min(5, scale));
+    lightboxImg.style.transform = `scale(${scale})`;
+  };
+
+  const onKey = (e) => {
+    if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', onKey); }
+    else if (e.key === 'ArrowLeft') showImage(idx - 1);
+    else if (e.key === 'ArrowRight') showImage(idx + 1);
+  };
+  document.addEventListener('keydown', onKey);
+};
 
 function navigateTo(page) {
   state.page = page;
