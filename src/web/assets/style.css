@@ -413,6 +413,29 @@ body {
   background: var(--bg-tertiary);
 }
 
+.icon-btn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.icon-btn:hover {
+  background: var(--bg-hover);
+}
+
+.icon-btn:disabled {
+  cursor: not-allowed;
+}
+
 .theme-toggle {
   background: var(--bg-tertiary);
   border: 1px solid var(--border);

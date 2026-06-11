@@ -21,6 +21,7 @@ import {
   isWxgf,
   convertWxgfToJpg,
 } from "./image.js";
+import { doRefresh } from "./refresh.js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,6 +45,14 @@ app.get("/api/health", (c) => c.json({ status: "ok" }));
 
 app.get("/api/last-refresh", (c) => {
   return c.json({ lastRefresh: globalThis.__wechatLastRefresh || null });
+});
+
+app.post("/api/refresh", async (c) => {
+  const result = await doRefresh();
+  if (result.ok) {
+    return c.json({ success: true, lastRefresh: globalThis.__wechatLastRefresh });
+  }
+  return c.json({ success: false, error: result.error }, 500);
 });
 
 app.get("/api/status", (c) => {

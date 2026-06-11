@@ -19,6 +19,7 @@
       <button class="nav-btn" data-page="setup">设置</button>
     </nav>
     <div class="header-actions">
+      <button class="icon-btn" onclick="manualRefresh()" title="刷新数据" id="refreshBtn">&#8635;</button>
       <button class="theme-toggle" onclick="toggleTheme()" title="切换主题" id="themeBtn">&#9790;</button>
       <div class="status-badge" id="statusBadge">
         <span class="status-dot disconnected" id="statusDot"></span>
@@ -239,6 +240,36 @@ async function checkStatus() {
     $('#statusText').textContent = '服务离线';
   }
 }
+
+window.manualRefresh = async function() {
+  const btn = $('#refreshBtn');
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  btn.style.opacity = '0.5';
+  try {
+    const r = await api('/api/refresh', { method: 'POST' });
+    if (r.success) {
+      showToast('数据刷新成功');
+    } else {
+      showToast('刷新失败: ' + (r.error || '未知错误'), 'error');
+    }
+    await checkStatus();
+    if (state.currentPage === 'chat' && state.currentSession) {
+      state.messageOffset = 0;
+      state.allLoaded = false;
+      await loadMessages(state.currentSession);
+      renderChatPage();
+    } else if (state.currentPage === 'sessions') {
+      await loadSessions();
+      renderSessionsPage();
+    }
+  } catch (e) {
+    showToast('刷新失败: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.style.opacity = '1';
+  }
+};
 
 async function loadSessions(keyword) {
   state.loading = true;
