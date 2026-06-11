@@ -257,6 +257,9 @@ function renderChatPage() {
   const sessionHtml = state.sessions.map(renderSessionItem).join('');
   const current = state.sessions.find(s => s.username === state.currentSession);
   const name = current ? (current.remark || current.nickname || current.alias || current.username) : '';
+  const headerAvatar = current?.smallHeadUrl
+    ? `<img class="session-avatar-img" src="${current.smallHeadUrl}" alt="" style="width:36px;height:36px;border-radius:50%;object-fit:cover" onerror="this.outerHTML='<div class=\\'session-avatar\\'>${getInitial(name)}</div>'">`
+    : `<div class="session-avatar">${getInitial(name)}</div>`;
 
   let messagesHtml = '';
   if (state.messages.length === 0 && state.currentSession) {
@@ -295,7 +298,8 @@ function renderChatPage() {
     <div class="chat-area">
       ${state.currentSession ? `
         <div class="chat-header">
-          <div class="session-avatar">${getInitial(name)}</div>
+          <button class="sidebar-toggle" onclick="toggleSidebar()">☰</button>
+          ${headerAvatar}
           <div>
             <div class="chat-header-title">${escapeHtml(name)}</div>
             <div class="chat-header-info">${escapeHtml(state.currentSession)}</div>
@@ -311,10 +315,17 @@ function renderChatPage() {
             </div>
           </div>` : ''}
         </div>
-        <div style="display:flex;flex:1;overflow:hidden">
-          <div class="messages-container" id="messagesContainer" style="flex:1">${messagesHtml}</div>
-          <div class="member-panel" id="memberPanel" style="display:none"></div>
-          <div class="chat-stats-panel" id="chatStatsPanel" style="display:none"></div>
+        <div style="display:flex;flex:1;overflow:hidden;flex-direction:column">
+          ${state.currentSession ? `<div style="display:flex;padding:8px 16px;border-bottom:1px solid var(--border);gap:8px">
+            <input class="search-box" placeholder="搜索当前会话..." id="chatSearch" style="flex:1;padding:6px 10px;font-size:13px" value="${escapeHtml($('#chatSearch')?.value || '')}">
+            <button class="btn btn-secondary btn-sm" onclick="searchInChat()">搜索</button>
+            <button class="btn btn-secondary btn-sm" id="chatSearchClear" style="display:none" onclick="clearChatSearch()">清除</button>
+          </div>` : ''}
+          <div style="display:flex;flex:1;overflow:hidden">
+            <div class="messages-container" id="messagesContainer" style="flex:1">${messagesHtml}</div>
+            <div class="member-panel" id="memberPanel" style="display:none"></div>
+            <div class="chat-stats-panel" id="chatStatsPanel" style="display:none"></div>
+          </div>
         </div>
       ` : `
         <div class="empty-state">
@@ -327,6 +338,12 @@ function renderChatPage() {
   const mc = $('#messagesContainer');
   if (mc && !window._preservingScroll) mc.scrollTop = mc.scrollHeight;
   window._preservingScroll = false;
+
+  if (window._sessionListScroll >= 0) {
+    const sl = $('#sessionList');
+    if (sl) sl.scrollTop = window._sessionListScroll;
+    window._sessionListScroll = -1;
+  }
 }
 
 async function selectSession(username) {
@@ -334,6 +351,8 @@ async function selectSession(username) {
   state.messages = [];
   state.messageOffset = 0;
   state.allLoaded = false;
+  const sb = document.querySelector('.sidebar');
+  if (sb) sb.classList.remove('open');
   renderChatPage();
   await loadMessages(username);
   renderChatPage();
@@ -596,6 +615,38 @@ function renderChatStatsPanel(panel, s) {
 
     </div>`;
 }
+
+window.searchInChat = async function() {
+  const keyword = $('#chatSearch')?.value?.trim();
+  if (!keyword || !state.currentSession) return;
+  const clearBtn = $('#chatSearchClear');
+  if (clearBtn) clearBtn.style.display = 'inline-flex';
+  state.messages = [];
+  state.messageOffset = 0;
+  state.allLoaded = false;
+  window._preservingScroll = true;
+  try {
+    state.messages = await api(`/api/messages?talker_id=${encodeURIComponent(state.currentSession)}&keyword=${encodeURIComponent(keyword)}&limit=200&reverse=true`);
+  } catch { state.messages = []; }
+  renderChatPage();
+};
+
+window.clearChatSearch = async function() {
+  const input = $('#chatSearch');
+  if (input) input.value = '';
+  const clearBtn = $('#chatSearchClear');
+  if (clearBtn) clearBtn.style.display = 'none';
+  state.messages = [];
+  state.messageOffset = 0;
+  state.allLoaded = false;
+  await loadMessages(state.currentSession);
+  renderChatPage();
+};
+
+window.toggleSidebar = function() {
+  const sb = document.querySelector('.sidebar');
+  if (sb) sb.classList.toggle('open');
+};
 
 window.toggleTheme = function() {
   const current = document.documentElement.getAttribute('data-theme');
@@ -1294,11 +1345,13 @@ async function init() {
   renderPage();
 
   setInterval(async () => {
+    const sl = $('#sessionList');
+    window._sessionListScroll = sl ? sl.scrollTop : 0;
     await loadSessions($('#sessionSearch')?.value);
     await checkStatus();
     if (state.page === 'chat' && state.currentSession && !state.loading) {
-      const chatEl = document.querySelector('.chat-area');
-      const wasAtBottom = chatEl && (chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 60);
+      const mc = $('#messagesContainer');
+      const wasAtBottom = mc && (mc.scrollHeight - mc.scrollTop - mc.clientHeight < 60);
       const fresh = await api(`/api/messages?talker_id=${encodeURIComponent(state.currentSession)}&limit=50&offset=0&reverse=true`);
       const existingSeqs = new Set(state.messages.map(m => m.seq));
       const newOnly = fresh.filter(m => !existingSeqs.has(m.seq));
@@ -1307,9 +1360,13 @@ async function init() {
         state.messageOffset += newOnly.length;
         renderChatPage();
       }
-      if (wasAtBottom && chatEl) chatEl.scrollTop = chatEl.scrollHeight;
+      if (wasAtBottom && mc) mc.scrollTop = mc.scrollHeight;
     } else {
       renderPage();
+    }
+    if (window._sessionListScroll >= 0) {
+      const sl2 = $('#sessionList');
+      if (sl2) sl2.scrollTop = window._sessionListScroll;
     }
   }, 30000);
 

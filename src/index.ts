@@ -135,6 +135,17 @@ function createMcpServer() {
   );
 
   server.tool(
+    "get_chat_stats",
+    "Get per-session chat statistics for a specific conversation. Includes message counts, type distribution, hourly/daily activity, top words, sender ranking (for group chats), reply time analysis.",
+    {
+      talker: z
+        .string()
+        .describe("The talker's username/wxid (e.g. 'wxid_xxx' or 'xxx@chatroom')"),
+    },
+    async (args) => handleToolCall("get_chat_stats", args)
+  );
+
+  server.tool(
     "get_chatroom_members",
     "Get member list of a WeChat group chat (chatroom). Returns member nicknames and wxids.",
     {

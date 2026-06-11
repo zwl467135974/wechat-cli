@@ -121,15 +121,15 @@ export async function searchMessages(
         tableName,
         keyword,
         talker,
-        limit,
-        offset
+        limit + offset,
+        0
       );
       allMessages.push(...msgs);
     }
   }
 
   allMessages.sort((a, b) => b.seq - a.seq);
-  const result = allMessages.slice(0, limit);
+  const result = allMessages.slice(offset, offset + limit);
   await resolveSenderNames(dataDir, result);
   return result;
 }
@@ -679,29 +679,26 @@ export async function getGlobalStats(dataDir: string): Promise<GlobalStats> {
     for (const tRow of tables[0].values) {
       const tableName = String(tRow[0]);
       try {
-        const countRow = db.exec(`SELECT COUNT(*) FROM "${tableName}"`);
-        if (countRow.length > 0) {
-          totalMessages += Number(countRow[0].values[0][0]);
+        const aggRows = db.exec(
+          `SELECT COUNT(*) AS cnt, MIN(create_time) AS min_t, MAX(create_time) AS max_t FROM "${tableName}"`
+        );
+        if (aggRows.length > 0 && aggRows[0].values.length > 0) {
+          const cnt = Number(aggRows[0].values[0][0]);
+          const minT = Number(aggRows[0].values[0][1]);
+          const maxT = Number(aggRows[0].values[0][2]);
+          totalMessages += cnt;
+          talkerCounts[tableName] = (talkerCounts[tableName] || 0) + cnt;
+          if (minT && minT < earliest) earliest = minT;
+          if (maxT && maxT > latest) latest = maxT;
         }
 
         const typeRows = db.exec(
-          `SELECT (local_type & 0xFFFF) AS mt, COUNT(*) AS c FROM "${tableName}" GROUP BY mt ORDER BY c DESC`
+          `SELECT (local_type & 0xFFFF) AS mt, COUNT(*) AS c FROM "${tableName}" GROUP BY mt`
         );
         if (typeRows.length > 0) {
           for (const r of typeRows[0].values) {
-            const mt = Number(r[0]);
-            typeCounts[mt] = (typeCounts[mt] || 0) + Number(r[1]);
+            typeCounts[Number(r[0])] = (typeCounts[Number(r[0])] || 0) + Number(r[1]);
           }
-        }
-
-        const talkerRow = db.exec(
-          `SELECT MIN(create_time), MAX(create_time) FROM "${tableName}"`
-        );
-        if (talkerRow.length > 0 && talkerRow[0].values.length > 0) {
-          const minT = Number(talkerRow[0].values[0][0]);
-          const maxT = Number(talkerRow[0].values[0][1]);
-          if (minT && minT < earliest) earliest = minT;
-          if (maxT && maxT > latest) latest = maxT;
         }
 
         const hourlyRows = db.exec(
@@ -721,11 +718,6 @@ export async function getGlobalStats(dataDir: string): Promise<GlobalStats> {
             const d = String(r[0]);
             dailyActivity[d] = (dailyActivity[d] || 0) + Number(r[1]);
           }
-        }
-
-        const tcRow = db.exec(`SELECT COUNT(*) FROM "${tableName}"`);
-        if (tcRow.length > 0) {
-          talkerCounts[tableName] = (talkerCounts[tableName] || 0) + Number(tcRow[0].values[0][0]);
         }
       } catch {
         // skip unreadable tables

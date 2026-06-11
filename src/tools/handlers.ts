@@ -3,6 +3,7 @@ import {
   getMessages,
   searchMessages,
   getGlobalStats,
+  getChatStats,
 } from "../db/query-messages.js";
 import { closeAll } from "../db/manager.js";
 import { getConfig } from "../config.js";
@@ -354,6 +355,22 @@ export async function handleToolCall(
             {
               type: "text",
               text: JSON.stringify(stats, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "get_chat_stats": {
+        const { talker } = args as { talker: string };
+        const chatStats = await getChatStats(config.dataDir, talker);
+        if (!chatStats) {
+          return { content: [{ type: "text", text: "No data found for this conversation." }] };
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(chatStats, null, 2),
             },
           ],
         };

@@ -7,6 +7,7 @@ import {
   searchMessages,
   getGlobalStats,
   getChatStats,
+  clearShardCache,
 } from "../db/query-messages.js";
 import { closeAll, findFilesByType } from "../db/manager.js";
 import { execPython } from "../python/runner.js";
@@ -108,7 +109,9 @@ app.post("/api/decrypt", async (c) => {
     out_dir: outDir,
   });
   closeAll();
+  clearShardCache();
   statsCache = null;
+  chatStatsCache.clear();
 
   return c.json({ result });
 });
@@ -266,16 +269,27 @@ app.get("/api/export", async (c) => {
   return c.json({ error: "unsupported format" }, 400);
 });
 
+function escHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 function buildExportHtml(talker: string, messages: import("../db/models.js").Message[]): string {
+  const typeLabels: Record<number, string> = {
+    1: "", 3: "[图片]", 34: "[语音]", 43: "[视频]",
+    47: "[表情]", 48: "[位置]", 49: "[应用]", 10000: "[系统]", 10002: "[撤回]",
+  };
   const rows = messages.map(m => {
     const t = new Date(m.time).toLocaleString("zh-CN");
     const sender = m.sender || m.talker;
     const cls = m.isSelf ? "self" : "other";
-    return `<div class="msg ${cls}"><span class="time">${t}</span><span class="sender">${sender}</span><span class="content">${m.content}</span></div>`;
+    const typeTag = typeLabels[m.type] || "";
+    const content = escHtml(m.content);
+    const prefix = typeTag && m.type !== 1 ? `${typeTag} ` : "";
+    return `<div class="msg ${cls}"><span class="time">${t}</span><span class="sender">${escHtml(sender)}</span><span class="content">${prefix}${content}</span></div>`;
   }).join("\n");
 
   return `<!DOCTYPE html>
-<html lang="zh-CN"><head><meta charset="UTF-8"><title>聊天记录 - ${talker}</title>
+<html lang="zh-CN"><head><meta charset="UTF-8"><title>聊天记录 - ${escHtml(talker)}</title>
 <style>
 body{font-family:system-ui;margin:20px auto;max-width:800px;background:#f5f5f5;padding:20px}
 h1{font-size:18px;color:#333;border-bottom:1px solid #ddd;padding-bottom:8px}
@@ -284,7 +298,7 @@ h1{font-size:18px;color:#333;border-bottom:1px solid #ddd;padding-bottom:8px}
 .time{color:#999;min-width:140px;font-size:12px}
 .sender{min-width:80px;font-weight:bold;font-size:13px}
 .content{flex:1;word-break:break-all}
-</style></head><body><h1>聊天记录 - ${talker} (${messages.length}条)</h1>${rows}</body></html>`;
+</style></head><body><h1>聊天记录 - ${escHtml(talker)} (${messages.length}条)</h1>${rows}</body></html>`;
 }
 
 app.get("/api/image", async (c) => {
