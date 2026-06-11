@@ -176,13 +176,17 @@ export async function handleToolCall(
   try {
     switch (name) {
       case "decrypt_database": {
-        const { out_dir } = args as {
+        const { src_path, key, out_dir } = args as {
+          src_path?: string;
+          key?: string;
           out_dir?: string;
         };
         const outputDir = out_dir || config.dataDir;
+        const dbDir = src_path || config.wechatDbSrcPath;
         const result = await execPython("decrypt_db_v2.py", {
-          db_dir: config.wechatDbSrcPath,
+          db_dir: dbDir,
           out_dir: outputDir,
+          ...(key ? { key } : {}),
         });
         closeAll();
         return {
@@ -191,8 +195,13 @@ export async function handleToolCall(
       }
 
       case "extract_db_key": {
+        const { dll_path, wechat_path } = args as {
+          dll_path?: string;
+          wechat_path?: string;
+        };
         const result = await execPython("extract_key_v3.py", {
-          db_dir: config.wechatDbSrcPath,
+          ...(dll_path ? { dll_path } : {}),
+          ...(wechat_path ? { wechat_path } : {}),
         });
         return {
           content: [{ type: "text", text: result }],

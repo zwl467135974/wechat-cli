@@ -241,7 +241,22 @@ function renderChatPage() {
     messagesHtml = '<div class="empty-state"><div class="empty-state-icon">💬</div><div class="empty-state-text">选择一个会话查看聊天记录</div></div>';
   } else {
     const loadMore = state.messageOffset >= 50 ? `<div class="load-more-bar"><button class="btn btn-secondary btn-sm" onclick="loadOlder()">加载更多历史消息</button></div>` : '';
-    messagesHtml = loadMore + state.messages.map(renderMessageContent).join('');
+    const parts = [loadMore];
+    let lastDate = '';
+    for (const msg of state.messages) {
+      const msgDate = new Date(msg.time).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' });
+      if (msgDate !== lastDate) {
+        const msgTime = new Date(msg.time);
+        const today = new Date();
+        let label = msgDate;
+        if (msgTime.toDateString() === today.toDateString()) label = '今天';
+        else if (msgTime.toDateString() === new Date(today.getTime() - 86400000).toDateString()) label = '昨天';
+        parts.push(`<div class="date-separator"><span>${label}</span></div>`);
+        lastDate = msgDate;
+      }
+      parts.push(renderMessageContent(msg));
+    }
+    messagesHtml = parts.join('');
   }
 
   mainContent().innerHTML = `
@@ -261,8 +276,20 @@ function renderChatPage() {
             <div class="chat-header-title">${escapeHtml(name)}</div>
             <div class="chat-header-info">${escapeHtml(state.currentSession)}</div>
           </div>
+          ${state.currentSession.endsWith('@chatroom') ? `<button class="btn btn-secondary btn-sm" style="margin-left:auto" onclick="toggleMemberPanel()">成员</button>` : ''}
+          ${state.currentSession ? `<div style="margin-left:8px" class="export-dropdown">
+            <button class="btn btn-secondary btn-sm" onclick="toggleExportMenu()">导出</button>
+            <div class="export-menu" id="exportMenu">
+              <a href="/api/export?talker=${encodeURIComponent(state.currentSession)}&format=json" download>JSON</a>
+              <a href="/api/export?talker=${encodeURIComponent(state.currentSession)}&format=txt" download>TXT</a>
+              <a href="/api/export?talker=${encodeURIComponent(state.currentSession)}&format=html" download>HTML</a>
+            </div>
+          </div>` : ''}
         </div>
-        <div class="messages-container" id="messagesContainer">${messagesHtml}</div>
+        <div style="display:flex;flex:1;overflow:hidden">
+          <div class="messages-container" id="messagesContainer" style="flex:1">${messagesHtml}</div>
+          <div class="member-panel" id="memberPanel" style="display:none"></div>
+        </div>
       ` : `
         <div class="empty-state">
           <div class="empty-state-icon">💬</div>
@@ -290,6 +317,54 @@ window.loadOlder = async function() {
   await loadMessages(state.currentSession, true);
   renderChatPage();
 };
+
+let memberPanelVisible = false;
+window.toggleMemberPanel = async function() {
+  const panel = $('#memberPanel');
+  if (!panel) return;
+  memberPanelVisible = !memberPanelVisible;
+  if (memberPanelVisible) {
+    panel.style.display = 'block';
+    panel.innerHTML = '<div style="padding:16px;color:var(--text-muted)">加载中...</div>';
+    try {
+      const members = await api(`/api/chatroom-members?chatroom=${encodeURIComponent(state.currentSession)}`);
+      state.chatRoomMembers = members;
+      renderMemberPanel(panel, members);
+    } catch (e) {
+      panel.innerHTML = `<div style="padding:16px;color:var(--danger)">加载失败: ${e.message}</div>`;
+    }
+  } else {
+    panel.style.display = 'none';
+  }
+};
+
+function renderMemberPanel(panel, members) {
+  const html = `
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600">群成员 (${members.length})</div>
+    <div style="overflow-y:auto;flex:1;padding:8px">
+      ${members.map(m => {
+        const name = m.nickname || m.wxid;
+        const avatar = m.smallHeadUrl
+          ? `<img class="member-avatar" src="${m.smallHeadUrl}" alt="" loading="lazy" onerror="this.outerHTML='<div class=\\'member-avatar-fallback\\'>${getInitial(name)}</div>'">`
+          : `<div class="member-avatar-fallback">${getInitial(name)}</div>`;
+        return `<div class="member-item">${avatar}<span class="member-name">${escapeHtml(name)}</span></div>`;
+      }).join('')}
+    </div>`;
+  panel.innerHTML = html;
+}
+
+window.toggleExportMenu = function() {
+  const menu = $('#exportMenu');
+  if (!menu) return;
+  menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+};
+
+document.addEventListener('click', function(e) {
+  const menu = $('#exportMenu');
+  if (menu && !e.target.closest('.export-dropdown')) {
+    menu.style.display = 'none';
+  }
+});
 
 function renderContactsPage() {
   const cards = state.contacts.map(c => {
@@ -650,7 +725,10 @@ window.openLightbox = function(imgEl) {
     ${images.length > 1 ? '<div class="lightbox-nav lightbox-prev">&#8249;</div>' : ''}
     <img class="lightbox-img" src="${imgEl.src}" alt="">
     ${images.length > 1 ? '<div class="lightbox-nav lightbox-next">&#8250;</div>' : ''}
-    <div class="lightbox-counter">${currentIndex + 1} / ${images.length}</div>
+    <div class="lightbox-toolbar">
+      <div class="lightbox-counter">${currentIndex + 1} / ${images.length}</div>
+      <button class="btn btn-secondary btn-sm" id="lightboxOriginal">查看原图</button>
+    </div>
   `;
   document.body.appendChild(overlay);
 
@@ -667,10 +745,28 @@ window.openLightbox = function(imgEl) {
     counter.textContent = `${idx + 1} / ${images.length}`;
     scale = 1;
     lightboxImg.style.transform = '';
+    originalBtn.textContent = '查看原图';
   }
 
   overlay.querySelector('.lightbox-close').onclick = () => overlay.remove();
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  const originalBtn = overlay.querySelector('#lightboxOriginal');
+  let viewingOriginal = false;
+  originalBtn.onclick = (e) => {
+    e.stopPropagation();
+    const src = images[idx];
+    if (!viewingOriginal && src.includes('/api/image')) {
+      const sep = src.includes('?') ? '&' : '?';
+      lightboxImg.src = src + sep + 'original=true';
+      originalBtn.textContent = '查看缩略图';
+      viewingOriginal = true;
+    } else if (viewingOriginal && src.includes('/api/image')) {
+      lightboxImg.src = src.replace(/[?&]original=true/, '');
+      originalBtn.textContent = '查看原图';
+      viewingOriginal = false;
+    }
+  };
   const prev = overlay.querySelector('.lightbox-prev');
   const next = overlay.querySelector('.lightbox-next');
   if (prev) prev.onclick = (e) => { e.stopPropagation(); showImage(idx - 1); };

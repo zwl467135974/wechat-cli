@@ -25,11 +25,18 @@ function loadKey(): { key: string; xor_key: number } | null {
 export function resolveImagePath(
   srcPath: string,
   talker: string,
-  mediaPath: string
+  mediaPath: string,
+  preferOriginal = false
 ): string | null {
   if (!srcPath) return null;
 
   const srcRoot = path.dirname(srcPath);
+
+  if (preferOriginal) {
+    const origPath = path.join(srcRoot, mediaPath + ".dat");
+    if (fs.existsSync(origPath)) return origPath;
+  }
+
   const thumbPath = path.join(srcRoot, mediaPath + "_t.dat");
   if (fs.existsSync(thumbPath)) return thumbPath;
 

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { getSessions, getContacts } from "../db/query-contacts.js";
+import { getSessions, getContacts, getChatRoomMembers } from "../db/query-contacts.js";
 import {
   getMessages,
   searchMessages,
@@ -154,6 +154,80 @@ app.get("/api/stats", async (c) => {
   }
 });
 
+app.get("/api/chatroom-members", async (c) => {
+  const config = getConfig();
+  const chatroom = c.req.query("chatroom");
+  if (!chatroom) {
+    return c.json({ error: "chatroom parameter is required" }, 400);
+  }
+  try {
+    const members = await getChatRoomMembers(config.dataDir, chatroom);
+    return c.json(members);
+  } catch (e: unknown) {
+    return c.json({ error: (e as Error).message }, 500);
+  }
+});
+
+app.get("/api/export", async (c) => {
+  const config = getConfig();
+  const talker = c.req.query("talker");
+  const format = c.req.query("format") || "json";
+
+  if (!talker) {
+    return c.json({ error: "talker is required" }, 400);
+  }
+
+  const messages = await getMessages(config.dataDir, talker, {
+    limit: 10000,
+    reverse: true,
+  });
+
+  if (format === "json") {
+    return c.json(messages);
+  }
+
+  if (format === "txt") {
+    const lines = messages.map(m => {
+      const t = new Date(m.time).toLocaleString("zh-CN");
+      const sender = m.sender || m.talker;
+      return `[${t}] ${sender}: ${m.content}`;
+    });
+    return c.text(lines.join("\n"), 200, {
+      "Content-Disposition": `attachment; filename="chat-${talker}.txt"`,
+    });
+  }
+
+  if (format === "html") {
+    const html = buildExportHtml(talker, messages);
+    return c.html(html, 200, {
+      "Content-Disposition": `attachment; filename="chat-${talker}.html"`,
+    });
+  }
+
+  return c.json({ error: "unsupported format" }, 400);
+});
+
+function buildExportHtml(talker: string, messages: import("../db/models.js").Message[]): string {
+  const rows = messages.map(m => {
+    const t = new Date(m.time).toLocaleString("zh-CN");
+    const sender = m.sender || m.talker;
+    const cls = m.isSelf ? "self" : "other";
+    return `<div class="msg ${cls}"><span class="time">${t}</span><span class="sender">${sender}</span><span class="content">${m.content}</span></div>`;
+  }).join("\n");
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><title>聊天记录 - ${talker}</title>
+<style>
+body{font-family:system-ui;margin:20px auto;max-width:800px;background:#f5f5f5;padding:20px}
+h1{font-size:18px;color:#333;border-bottom:1px solid #ddd;padding-bottom:8px}
+.msg{padding:6px 0;border-bottom:1px solid #eee;display:flex;gap:8px;font-size:14px}
+.msg.self .sender{color:#3b82f6}.msg.other .sender{color:#22c55e}
+.time{color:#999;min-width:140px;font-size:12px}
+.sender{min-width:80px;font-weight:bold;font-size:13px}
+.content{flex:1;word-break:break-all}
+</style></head><body><h1>聊天记录 - ${talker} (${messages.length}条)</h1>${rows}</body></html>`;
+}
+
 app.get("/api/image", async (c) => {
   const mediaPath = c.req.query("path");
   const talker = c.req.query("talker");
@@ -164,7 +238,8 @@ app.get("/api/image", async (c) => {
   }
 
   const config = getConfig();
-  const datPath = resolveImagePath(config.wechatDbSrcPath, talker, mediaPath);
+  const original = c.req.query("original") === "true";
+  const datPath = resolveImagePath(config.wechatDbSrcPath, talker, mediaPath, original);
 
   if (!datPath) {
     return c.json({ error: "Image file not found" }, 404);

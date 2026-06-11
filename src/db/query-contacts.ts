@@ -206,3 +206,137 @@ function findSessionTable(
   if (tables.includes("Session")) return { version: "v3", table: "Session" };
   return null;
 }
+
+export interface ChatRoomMember {
+  wxid: string;
+  nickname: string;
+  smallHeadUrl: string;
+}
+
+export async function getChatRoomMembers(
+  dataDir: string,
+  chatroomUsername: string
+): Promise<ChatRoomMember[]> {
+  const contactPath = findSingleFile(dataDir, "contact");
+  if (!contactPath) return [];
+
+  const db = await getConnection(contactPath);
+
+  const row = db.exec(
+    "SELECT ext_buffer FROM chat_room WHERE username = ?",
+    [chatroomUsername]
+  );
+  if (row.length === 0 || row[0].values.length === 0) return [];
+
+  const extBuffer = row[0].values[0][0];
+  if (!extBuffer) return [];
+
+  const data = Buffer.isBuffer(extBuffer) ? extBuffer : Buffer.from(extBuffer as Uint8Array);
+  const members = parseChatRoomExtBuffer(data);
+
+  if (members.length === 0) return [];
+
+  const wxids = members.map(m => m.wxid);
+  const contactMap = await loadContactMap(dataDir, wxids);
+
+  return members.map(m => {
+    const info = contactMap.get(m.wxid);
+    return {
+      wxid: m.wxid,
+      nickname: m.nickname || info?.remark || info?.nickname || m.wxid,
+      smallHeadUrl: info?.smallHeadUrl || "",
+    };
+  });
+}
+
+function parseChatRoomExtBuffer(data: Buffer): Array<{ wxid: string; nickname: string }> {
+  const members: Array<{ wxid: string; nickname: string }> = [];
+  let offset = 0;
+
+  while (offset < data.length) {
+    const byte = data[offset];
+    if (byte === undefined) break;
+    const wireType = byte & 0x07;
+    const fieldNum = byte >> 3;
+    offset++;
+
+    if (wireType === 2) {
+      const lenInfo = readVarintFromBuf(data, offset);
+      offset += lenInfo.size;
+      if (offset + lenInfo.value > data.length) break;
+      const fieldData = data.subarray(offset, offset + lenInfo.value);
+      offset += lenInfo.value;
+
+      if (fieldNum === 1) {
+        const member = parseMemberEntry(fieldData);
+        if (member.wxid) members.push(member);
+      }
+    } else if (wireType === 0) {
+      const v = readVarintFromBuf(data, offset);
+      offset += v.size;
+    } else if (wireType === 1) {
+      offset += 8;
+    } else if (wireType === 5) {
+      offset += 4;
+    } else {
+      break;
+    }
+  }
+
+  return members;
+}
+
+function parseMemberEntry(data: Buffer): { wxid: string; nickname: string } {
+  let wxid = "";
+  let nickname = "";
+  let offset = 0;
+
+  while (offset < data.length) {
+    const byte = data[offset];
+    if (byte === undefined) break;
+    const wireType = byte & 0x07;
+    const fieldNum = byte >> 3;
+    offset++;
+
+    if (wireType === 2) {
+      const lenInfo = readVarintFromBuf(data, offset);
+      offset += lenInfo.size;
+      if (offset + lenInfo.value > data.length) break;
+      const fieldData = data.subarray(offset, offset + lenInfo.value);
+      offset += lenInfo.value;
+      const text = fieldData.toString("utf-8");
+
+      if (fieldNum === 1) wxid = text;
+      else if (fieldNum === 2) nickname = text;
+    } else if (wireType === 0) {
+      const v = readVarintFromBuf(data, offset);
+      offset += v.size;
+    } else if (wireType === 1) {
+      offset += 8;
+    } else if (wireType === 5) {
+      offset += 4;
+    } else {
+      break;
+    }
+  }
+
+  return { wxid, nickname };
+}
+
+function readVarintFromBuf(data: Buffer, offset: number): { value: number; size: number } {
+  let result = 0;
+  let shift = 0;
+  let size = 0;
+
+  while (offset < data.length) {
+    const byte = data[offset];
+    if (byte === undefined) break;
+    size++;
+    result |= (byte & 0x7f) << shift;
+    offset++;
+    if ((byte & 0x80) === 0) break;
+    shift += 7;
+  }
+
+  return { value: result, size };
+}
