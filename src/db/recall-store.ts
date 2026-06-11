@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { Message } from "./models.js";
 import { getConnection } from "./manager.js";
 import { listMsgTables, md5 } from "./message-parser.js";
@@ -17,10 +19,31 @@ interface StoredMsg {
   voiceText?: string;
 }
 
-const buffer = new Map<string, StoredMsg[]>();
+type PersistedRecalled = Record<string, StoredMsg>;
 
-function key(talker: string): string {
-  return talker;
+const buffer = new Map<string, StoredMsg[]>();
+let persistedCache: PersistedRecalled | null = null;
+const PERSIST_PATH = path.resolve(process.cwd(), "data", "recalled.json");
+
+function loadPersisted(): PersistedRecalled {
+  if (persistedCache) return persistedCache;
+  try {
+    if (fs.existsSync(PERSIST_PATH)) {
+      persistedCache = JSON.parse(fs.readFileSync(PERSIST_PATH, "utf-8"));
+    }
+  } catch { /* ignore */ }
+  if (!persistedCache) persistedCache = {};
+  return persistedCache;
+}
+
+function persistRecalled(talker: string, seq: number, msg: StoredMsg): void {
+  const store = loadPersisted();
+  const k = `${talker}::${seq}`;
+  if (store[k]) return;
+  store[k] = msg;
+  const dir = path.dirname(PERSIST_PATH);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(PERSIST_PATH, JSON.stringify(store), "utf-8");
 }
 
 function evict(): void {
@@ -37,7 +60,7 @@ function evict(): void {
 
 export function saveMessages(talker: string, messages: Message[]): void {
   if (messages.length === 0) return;
-  const existing = buffer.get(key(talker)) || [];
+  const existing = buffer.get(talker) || [];
   const existingSeqs = new Set(existing.map(m => m.seq));
   for (const m of messages) {
     if (m.type === 10000 || m.type === 10002) continue;
@@ -55,16 +78,20 @@ export function saveMessages(talker: string, messages: Message[]): void {
       voiceText: m.voiceText,
     });
   }
-  buffer.set(key(talker), existing);
+  buffer.set(talker, existing);
 }
 
 export function findRecalledMessage(
   talker: string,
-  _seq: number,
+  seq: number,
   revokeTime: string
 ): StoredMsg | null {
+  const persistKey = `${talker}::${seq}`;
+  const persisted = loadPersisted();
+  if (persisted[persistKey]) return persisted[persistKey];
+
   evict();
-  const msgs = buffer.get(key(talker));
+  const msgs = buffer.get(talker);
   if (!msgs || msgs.length === 0) return null;
 
   const revokeTs = new Date(revokeTime).getTime();
@@ -81,6 +108,10 @@ export function findRecalledMessage(
       bestDist = dist;
       best = m;
     }
+  }
+
+  if (best) {
+    persistRecalled(talker, seq, best);
   }
 
   return best;
@@ -114,7 +145,7 @@ export async function saveAllBeforeRefresh(dataDir: string): Promise<void> {
               [cutoff]
             );
             if (rows.length === 0) continue;
-            const existing = buffer.get(key(talker)) || [];
+            const existing = buffer.get(talker) || [];
             const existingSeqs = new Set(existing.map(m => m.seq));
             for (const r of rows[0].values) {
               const seq = Number(r[0]);
@@ -153,19 +184,11 @@ export async function saveAllBeforeRefresh(dataDir: string): Promise<void> {
                 isSelf,
               });
             }
-            buffer.set(key(talker), existing);
+            buffer.set(talker, existing);
           } catch { /* ignore */ }
         }
       } catch { /* ignore */ }
     }
   } catch { /* ignore */ }
   evict();
-}
-
-export function getRecallBufferStats(): { talkers: number; messages: number } {
-  let messages = 0;
-  for (const msgs of buffer.values()) {
-    messages += msgs.length;
-  }
-  return { talkers: buffer.size, messages };
 }
