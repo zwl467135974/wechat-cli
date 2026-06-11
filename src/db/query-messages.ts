@@ -13,6 +13,7 @@ import {
   resolveSenderNames,
   md5,
 } from "./message-parser.js";
+import { saveMessages } from "./recall-store.js";
 
 let shardCache: Map<string, ReturnType<typeof buildShardIndex>> = new Map();
 
@@ -77,11 +78,13 @@ export async function getMessages(
     const start = reverse ? Math.max(0, allMessages.length - limit - offset) : offset;
     const result = allMessages.slice(start, start + limit);
     await resolveSenderNames(dataDir, result);
+    saveMessages(talker, result);
     return result;
   }
 
   const result = allMessages;
   await resolveSenderNames(dataDir, result);
+  saveMessages(talker, result);
   return result;
 }
 

@@ -18,6 +18,7 @@ export interface Message {
   locationPoiName?: string;
   voiceDuration?: number;
   voiceText?: string;
+  revokedOriginal?: string;
 }
 
 export interface Session {

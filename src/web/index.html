@@ -123,7 +123,11 @@ function renderMessageContent(msg) {
       const plainMatch = msg.content.match(/<replacemsg>(.*?)<\/replacemsg>/);
       if (plainMatch) recallText = plainMatch[1];
     }
-    return `<div class="message-system"><span class="message-bubble">${escapeHtml(recallText)}</span></div>`;
+    let original = '';
+    if (msg.revokedOriginal) {
+      original = `<div class="revoked-original">${escapeHtml(msg.revokedOriginal)}</div>`;
+    }
+    return `<div class="message-system"><span class="message-bubble">${escapeHtml(recallText)}${original}</span></div>`;
   }
   const side = msg.isSelf ? 'self' : 'other';
   const sender = (!msg.isSelf && msg.isChatRoom) ? `<div class="message-sender">${escapeHtml(msg.sender || '')}</div>` : '';

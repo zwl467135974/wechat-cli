@@ -2,6 +2,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { decodeMessageContent } from "../db/codec.js";
 import { loadContactMap } from "../db/query-contacts.js";
+import { findRecalledMessage } from "./recall-store.js";
 import type { Message } from "../db/models.js";
 import type { Database } from "sql.js";
 
@@ -169,6 +170,15 @@ export async function parseMessageRow(
     }
   }
 
+  let revokedOriginal: string | undefined;
+  if (localType === 10002) {
+    const isoTime = new Date(createTime * 1000).toISOString();
+    const recalled = findRecalledMessage(defaultTalker, seq, isoTime);
+    if (recalled) {
+      revokedOriginal = recalled.content;
+    }
+  }
+
   return {
     seq,
     time: new Date(createTime * 1000).toISOString(),
@@ -189,6 +199,7 @@ export async function parseMessageRow(
     locationPoiName,
     voiceDuration,
     voiceText,
+    revokedOriginal,
   };
 }
 
@@ -230,12 +241,8 @@ function extractSystemMessage(content: string): string {
 function extractRevokeMessage(content: string): string {
   if (!content.includes("<")) return content;
   const cdata = content.match(/<!\[CDATA\[(.*?)\]\]>/);
-  if (cdata) return cdata[1].trim();
-  const replacemsg = content.match(/<replacemsg><!\[CDATA\[(.*?)\]\]><\/replacemsg>/);
-  if (replacemsg) return replacemsg[1].trim();
-  const generic = content.match(/<content>([\s\S]*?)<\/content>/);
-  if (generic) return generic[1].trim();
-  return content;
+  const label = cdata ? cdata[1].trim() : content;
+  return label;
 }
 
 function extractVoiceTranscription(data: Buffer): string | undefined {

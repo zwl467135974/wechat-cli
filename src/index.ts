@@ -10,6 +10,7 @@ import { app } from "./server/api.js";
 import { closeAll } from "./db/manager.js";
 import { clearShardCache } from "./db/query-messages.js";
 import { execPython } from "./python/runner.js";
+import { saveAllBeforeRefresh } from "./db/recall-store.js";
 import fs from "node:fs";
 
 declare global {
@@ -202,9 +203,10 @@ async function startWebMode() {
   if (autoRefreshMs > 0) {
     setInterval(async () => {
       try {
+        const cfg = getConfig();
+        saveAllBeforeRefresh(cfg.dataDir);
         closeAll();
         clearShardCache();
-        const cfg = getConfig();
         if (!cfg.wechatDbSrcPath) return;
         const absOutDir = path.resolve(cfg.dataDir);
         if (!fs.existsSync(absOutDir)) fs.mkdirSync(absOutDir, { recursive: true });
