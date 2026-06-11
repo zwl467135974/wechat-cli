@@ -16,6 +16,9 @@ import {
   decryptImage,
   scanImageKey,
   getImageKeyStatus,
+  detectMime,
+  isWxgf,
+  convertWxgfToJpg,
 } from "./image.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -278,30 +281,37 @@ app.get("/api/image", async (c) => {
   }
 
   const decrypted = await decryptImage(datPath);
-  if (decrypted) {
-    const prefix = decrypted.subarray(0, 4).toString('ascii');
-    let mime = "image/jpeg";
-    if (prefix === "\x89PNG") mime = "image/png";
-    else if (prefix === "RIFF") mime = "image/webp";
-    else if (prefix === "GIF8") mime = "image/gif";
-    else if (prefix === "wxgf") {
-      if (decrypted.length > 20) {
-        const inner = decrypted.subarray(16);
-        const innerPfx = inner.subarray(0, 4).toString('ascii');
-        if (innerPfx === "RIFF") mime = "image/webp";
-        else if (innerPfx === "\x89PNG") mime = "image/png";
-        else if (innerPfx.substring(0, 3) === "\xff\xd8\xff") mime = "image/jpeg";
-      }
-    }
-    return new Response(new Uint8Array(decrypted), {
-      headers: {
-        "Content-Type": mime,
-        "Cache-Control": "public, max-age=3600",
-      },
-    });
+  if (!decrypted) {
+    return c.json({ error: "Image decryption key not available", keyStatus: getImageKeyStatus() }, 503);
   }
 
-  return c.json({ error: "Image decryption key not available", keyStatus: getImageKeyStatus() }, 503);
+  if (isWxgf(decrypted)) {
+    const jpg = await convertWxgfToJpg(decrypted);
+    if (jpg) {
+      return new Response(new Uint8Array(jpg), {
+        headers: { "Content-Type": "image/jpeg", "Cache-Control": "public, max-age=3600" },
+      });
+    }
+
+    if (original) {
+      const thumbPath = resolveImagePath(config.wechatDbSrcPath, talker, mediaPath, false);
+      if (thumbPath && thumbPath !== datPath) {
+        const thumbDec = await decryptImage(thumbPath);
+        if (thumbDec && !isWxgf(thumbDec)) {
+          return new Response(new Uint8Array(thumbDec), {
+            headers: { "Content-Type": "image/jpeg", "Cache-Control": "public, max-age=3600" },
+          });
+        }
+      }
+    }
+
+    return c.json({ error: "wxgf conversion failed" }, 500);
+  }
+
+  const mime = detectMime(decrypted);
+  return new Response(new Uint8Array(decrypted), {
+    headers: { "Content-Type": mime, "Cache-Control": "public, max-age=3600" },
+  });
 });
 
 app.get("/api/emoji", async (c) => {

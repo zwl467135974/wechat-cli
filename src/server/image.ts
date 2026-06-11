@@ -1,10 +1,54 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs";
+import os from "node:os";
 
 const PYTHON_DIR = path.join(path.dirname(import.meta.url.replace("file:///", "").replace("file://", "")), "..", "..", "python");
 
 let cachedKey: { key: string; xor_key: number } | null = null;
+
+export function detectMime(buf: Buffer): string {
+  if (buf.length < 4) return "application/octet-stream";
+  const pfx4 = buf.subarray(0, 4).toString("ascii");
+  if (pfx4 === "\x89PNG") return "image/png";
+  if (pfx4 === "RIFF") return "image/webp";
+  if (pfx4 === "GIF8") return "image/gif";
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  return "application/octet-stream";
+}
+
+export function isWxgf(buf: Buffer): boolean {
+  return buf.length >= 4 && buf.subarray(0, 4).toString("ascii") === "wxgf";
+}
+
+export async function convertWxgfToJpg(decryptedData: Buffer): Promise<Buffer | null> {
+  const tmpDir = path.join(os.tmpdir(), "wechat-cli");
+  if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+
+  const tmpId = Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+  const tmpDat = path.join(tmpDir, `wxgf_${tmpId}.bin`);
+  const tmpJpg = path.join(tmpDir, `wxgf_${tmpId}.jpg`);
+
+  try {
+    fs.writeFileSync(tmpDat, decryptedData);
+
+    const scriptPath = path.join(PYTHON_DIR, "convert_wxgf.py");
+    const result = await new Promise<boolean>((resolve) => {
+      const proc = spawn("python", [scriptPath, tmpDat, tmpJpg], { cwd: PYTHON_DIR });
+      proc.stderr.on("data", () => {});
+      proc.on("close", (code) => resolve(code === 0));
+      proc.on("error", () => resolve(false));
+    });
+
+    if (result && fs.existsSync(tmpJpg)) {
+      return fs.readFileSync(tmpJpg);
+    }
+    return null;
+  } finally {
+    if (fs.existsSync(tmpDat)) fs.unlinkSync(tmpDat);
+    if (fs.existsSync(tmpJpg)) fs.unlinkSync(tmpJpg);
+  }
+}
 
 function loadKey(): { key: string; xor_key: number } | null {
   if (cachedKey) return cachedKey;

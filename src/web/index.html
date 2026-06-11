@@ -120,7 +120,7 @@ function renderMessageContent(msg) {
   if (msg.type === 3) {
     if (msg.mediaPath) {
       const imgSrc = `${API}/api/image?path=${encodeURIComponent(msg.mediaPath)}&talker=${encodeURIComponent(msg.talker)}`;
-      bubble = `<div class="message-bubble image-bubble"><img class="chat-image" src="${imgSrc}" alt="[图片]" loading="lazy" onclick="openLightbox(this)" onerror="this.onerror=null;this.parentElement.innerHTML='<span class=\\'media-icon\\'>&#128247;</span> [图片] <a href=\\'javascript:void(0)\\' onclick=\\'event.stopPropagation();navigateTo(\"setup\")\\' style=\\'font-size:12px\\'>点击扫描图片密钥</a>'"/></div>`;
+      bubble = `<div class="message-bubble image-bubble"><img class="chat-image" src="${imgSrc}" alt="[图片]" loading="lazy" onclick="openLightbox(this)" onerror="handleImageError(this)"/></div>`;
     } else {
       bubble = `<div class="message-bubble media-bubble"><span class="media-icon">&#128247;</span> ${escapeHtml(msg.content)}</div>`;
     }
@@ -945,6 +945,13 @@ window.doScanImageKey = async function() {
 function updateNav() {
   $$('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.page === state.page));
 }
+
+window.handleImageError = function(img) {
+  img.onerror = null;
+  const wrap = document.createElement('div');
+  wrap.innerHTML = '<span class="media-icon">&#128247;</span> [图片] <a href="javascript:void(0)" onclick="event.stopPropagation();navigateTo(\'setup\')" style="font-size:12px">点击扫描图片密钥</a>';
+  img.parentElement.replaceWith(wrap);
+};
 
 window.openLightbox = function(imgEl) {
   const container = $('#messagesContainer');
