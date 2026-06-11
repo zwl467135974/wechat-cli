@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs";
-import crypto from "node:crypto";
 
 const PYTHON_DIR = path.join(path.dirname(import.meta.url.replace("file:///", "").replace("file://", "")), "..", "..", "python");
 
@@ -66,38 +65,6 @@ export function resolveVideoPath(
     for (const f of files) {
       if (f.startsWith(baseName)) {
         return path.join(videoDir, f);
-      }
-    }
-  }
-
-  return null;
-}
-
-export function resolveCacheThumb(
-  srcPath: string,
-  talker: string,
-  sortSeq: number
-): string | null {
-  const cfg = (globalThis as any).__wechatConfig;
-  if (!cfg?.wechatDbSrcPath) return null;
-
-  const srcRoot = path.dirname(cfg.wechatDbSrcPath);
-  const talkerMd5 = crypto.createHash("md5").update(talker).digest("hex");
-
-  const months: string[] = [];
-  const now = new Date();
-  for (let i = 0; i < 12; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
-  }
-
-  for (const month of months) {
-    const thumbDir = path.join(srcRoot, "cache", month, "Message", talkerMd5, "Thumb");
-    if (!fs.existsSync(thumbDir)) continue;
-    const files = fs.readdirSync(thumbDir);
-    for (const f of files) {
-      if (f.endsWith("_thumb.jpg") && f.startsWith(`${sortSeq}_`)) {
-        return path.join(thumbDir, f);
       }
     }
   }

@@ -55,6 +55,8 @@ export async function getMessages(
   if (targets.length === 0) return [];
 
   const allMessages: Message[] = [];
+  const fetchLimit = targets.length > 1 ? limit + offset : limit;
+  const fetchOffset = targets.length > 1 ? 0 : offset;
 
   for (const target of targets) {
     const db = await getConnection(target.filePath);
@@ -67,8 +69,8 @@ export async function getMessages(
       talker,
       target.talkerId,
       keyword,
-      limit,
-      offset,
+      fetchLimit,
+      fetchOffset,
       reverse
     );
     allMessages.push(...msgs);
@@ -76,7 +78,14 @@ export async function getMessages(
 
   allMessages.sort((a, b) => a.seq - b.seq);
 
-  const result = allMessages.slice(0, limit);
+  if (targets.length > 1) {
+    const start = reverse ? Math.max(0, allMessages.length - limit - offset) : offset;
+    const result = allMessages.slice(start, start + limit);
+    await resolveSenderNames(dataDir, result);
+    return result;
+  }
+
+  const result = allMessages;
   await resolveSenderNames(dataDir, result);
   return result;
 }
@@ -134,8 +143,7 @@ function findMsgTable(
   const directTable = `Msg_${talkerMd5}`;
   if (tableExists(db, directTable)) return directTable;
 
-  const tables = listMsgTables(db);
-  return tables.length > 0 ? tables[0] : null;
+  return null;
 }
 
 function tableExists(db: Database, name: string): boolean {
@@ -168,20 +176,16 @@ async function queryMessages(
   offset: number,
   reverse: boolean
 ): Promise<Message[]> {
-  let sql: string;
-  let params: unknown[] = [];
-
   const order = reverse ? "DESC" : "ASC";
-  const where = buildWhereClause(talker, talkerId, keyword, tableName);
-  params = where.params;
+  const where = buildWhereClause(keyword);
 
-  sql = `SELECT sort_seq, create_time, local_type, message_content, compress_content, status, source, packed_info_data
+  const sql = `SELECT sort_seq, create_time, local_type, message_content, compress_content, status, source, packed_info_data
          FROM "${tableName}" ${where.clause}
          ORDER BY sort_seq ${order}
          LIMIT ${limit} OFFSET ${offset}`;
 
   try {
-    const rows = db.exec(sql, params);
+    const rows = db.exec(sql, where.params);
     if (rows.length === 0) return [];
 
     const messages = await Promise.all(rows[0].values.map((row: unknown[]) =>
@@ -195,27 +199,15 @@ async function queryMessages(
 }
 
 function buildWhereClause(
-  talker: string,
-  talkerId: number | null,
-  keyword: string | undefined,
-  tableName: string
-): { clause: string; params: unknown[]; hasTalkerFilter: boolean } {
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-
-  if (keyword) {
-    conditions.push("message_content LIKE ?");
-    params.push(`%${keyword}%`);
-  }
-
-  if (conditions.length === 0) {
-    return { clause: "", params: [], hasTalkerFilter: false };
+  keyword: string | undefined
+): { clause: string; params: unknown[] } {
+  if (!keyword) {
+    return { clause: "", params: [] };
   }
 
   return {
-    clause: "WHERE " + conditions.join(" AND "),
-    params,
-    hasTalkerFilter: false,
+    clause: "WHERE message_content LIKE ?",
+    params: [`%${keyword}%`],
   };
 }
 
@@ -291,6 +283,8 @@ async function parseMessageRow(
   let referSender: string | undefined;
   let locationLabel: string | undefined;
   let locationPoiName: string | undefined;
+  let voiceDuration: number | undefined;
+  let voiceText: string | undefined;
 
   if (!content || content.length === 0 || (content.charCodeAt(0) < 0x20)) {
     content = getMediaTypeLabel(localType);
@@ -315,6 +309,8 @@ async function parseMessageRow(
     }
     content = "[表情]";
   } else if (localType === 34) {
+    const durMatch = content.match(/voicelength="(\d+)"/);
+    voiceDuration = durMatch ? Math.round(parseInt(durMatch[1]) / 1000) : undefined;
     content = "[语音]";
   } else if (localType === 48) {
     const locMatch = content.match(/label="([^"]+)"/);
@@ -349,6 +345,10 @@ async function parseMessageRow(
       ? Buffer.from(compressContent)
       : undefined;
   if (packedSource) {
+    if (localType === 34) {
+      voiceText = extractVoiceTranscription(packedSource);
+      if (voiceText) content = voiceText;
+    }
     const packedInfo = parsePackedInfo(packedSource);
     if (packedInfo) {
       if (localType === 3 && (packedInfo.imageMd5 || packedInfo.videoMd5)) {
@@ -382,6 +382,8 @@ async function parseMessageRow(
     referSender,
     locationLabel,
     locationPoiName,
+    voiceDuration,
+    voiceText,
   };
 }
 
@@ -418,6 +420,57 @@ function extractSystemMessage(content: string): string {
   const revokemsg = content.match(/<content>([\s\S]*?)<\/content>/);
   if (revokemsg) return revokemsg[1];
   return content;
+}
+
+function extractVoiceTranscription(data: Buffer): string | undefined {
+  try {
+    let offset = 0;
+    while (offset < data.length) {
+      const byte = data[offset];
+      if (byte === undefined) break;
+      const fieldNum = byte >> 3;
+      const wireType = byte & 0x07;
+      offset++;
+
+      if (wireType === 2) {
+        const len = readVarint(data, offset);
+        if (len.value < 0 || offset + len.size + len.value > data.length) break;
+        const fieldData = data.subarray(offset + len.size, offset + len.size + len.value);
+        offset += len.size + len.value;
+
+        if (fieldNum === 5 && fieldData.length > 4) {
+          let off = 0;
+          while (off < fieldData.length) {
+            const b = fieldData[off]; if (b === undefined) break;
+            const fn = b >> 3;
+            const wt = b & 0x07;
+            off++;
+            if (wt === 2) {
+              const innerLen = readVarint(fieldData, off);
+              if (innerLen.value < 0 || off + innerLen.size + innerLen.value > fieldData.length) break;
+              const inner = fieldData.subarray(off + innerLen.size, off + innerLen.size + innerLen.value);
+              off += innerLen.size + innerLen.value;
+              if (fn === 2) {
+                const text = inner.toString("utf-8");
+                if (text.length > 1) return text;
+              }
+            } else if (wt === 0) {
+              const v = readVarint(fieldData, off);
+              off += v.size;
+            } else if (wt === 1) { off += 8; }
+            else if (wt === 5) { off += 4; }
+            else break;
+          }
+        }
+      } else if (wireType === 0) {
+        const v = readVarint(data, offset);
+        offset += v.size;
+      } else if (wireType === 1) { offset += 8; }
+      else if (wireType === 5) { offset += 4; }
+      else break;
+    }
+  } catch { /* ignore */ }
+  return undefined;
 }
 
 interface AppMessageResult {
@@ -467,6 +520,18 @@ function extractAppMessage(raw: string): AppMessageResult {
     if (ref) {
       result.content += `\n▎回复 ${sender}: ${ref.substring(0, 100)}${ref.length > 100 ? "..." : ""}`;
     }
+    return result;
+  }
+
+  const appInfoMatch = raw.match(/<appinfo>[\s\S]*?<title>([\s\S]*?)<\/title>[\s\S]*?<\/appinfo>/);
+  const subAppmsgs = raw.match(/<appmsg[\s\S]*?<\/appmsg>/g);
+  if (appInfoMatch && subAppmsgs && subAppmsgs.length > 1) {
+    const items = subAppmsgs.slice(0, 10).map((block, i) => {
+      const tMatch = block.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
+      return `${i + 1}. ${tMatch ? tMatch[1].trim() : "..."}`;
+    });
+    const header = appInfoMatch[1].trim();
+    result.content = `[合并转发] ${header} (${subAppmsgs.length}条)\n${items.join("\n")}`;
     return result;
   }
 
@@ -686,7 +751,8 @@ export async function getGlobalStats(dataDir: string): Promise<GlobalStats> {
   if (contactDbPath) {
     try {
       const cdb = await getConnection(contactDbPath);
-      const cr = cdb.exec("SELECT COUNT(*) FROM Contact");
+      let cr = cdb.exec("SELECT COUNT(*) FROM contact");
+      if (!cr.length) cr = cdb.exec("SELECT COUNT(*) FROM Contact");
       if (cr.length > 0) totalContacts = Number(cr[0].values[0][0]);
     } catch { /* ignore */ }
   }

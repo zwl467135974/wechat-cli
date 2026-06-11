@@ -12,7 +12,6 @@ import { execPython } from "../python/runner.js";
 import { getConfig, saveEnvFile } from "../config.js";
 import {
   resolveImagePath,
-  resolveCacheThumb,
   resolveVideoPath,
   decryptImage,
   scanImageKey,
@@ -92,6 +91,12 @@ app.post("/api/save-config", async (c) => {
 
 app.post("/api/decrypt", async (c) => {
   const config = getConfig();
+  const body = await c.req.json().catch(() => ({} as Record<string, string>));
+  if (body.src_path) config.wechatDbSrcPath = body.src_path;
+  if (body.key) config.wechatDbKey = body.key;
+  if (!config.wechatDbSrcPath) {
+    return c.json({ error: "WeChat data path not configured" }, 400);
+  }
   const outDir = config.dataDir;
 
   const result = await execPython("decrypt_db_v2.py", {
@@ -135,7 +140,7 @@ app.get("/api/messages", async (c) => {
   const keyword = c.req.query("keyword");
   const limit = Number(c.req.query("limit")) || 50;
   const offset = Number(c.req.query("offset")) || 0;
-  const reverse = c.req.query("reverse") === "true";
+  const reverse = c.req.query("reverse") !== "false";
 
   if (!talkerId) {
     return c.json({ error: "talker_id is required" }, 400);
@@ -306,6 +311,9 @@ app.get("/api/emoji", async (c) => {
   }
 
   const config = getConfig();
+  if (!config.wechatDbSrcPath) {
+    return c.json({ error: "WeChat data path not configured" }, 503);
+  }
   const srcRoot = path.dirname(config.wechatDbSrcPath);
   const prefix = md5.substring(0, 2);
 

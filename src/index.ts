@@ -127,6 +127,39 @@ function createMcpServer() {
     async (args) => handleToolCall("get_contacts", args)
   );
 
+  server.tool(
+    "get_stats",
+    "Get global chat statistics including total messages, contacts, sessions, message type distribution, top contacts, hourly and daily activity.",
+    {},
+    async (args) => handleToolCall("get_stats", args)
+  );
+
+  server.tool(
+    "get_chatroom_members",
+    "Get member list of a WeChat group chat (chatroom). Returns member nicknames and wxids.",
+    {
+      chatroom: z
+        .string()
+        .describe("The chatroom username (e.g. xxx@chatroom)"),
+    },
+    async (args) => handleToolCall("get_chatroom_members", args)
+  );
+
+  server.tool(
+    "export_chat",
+    "Export chat messages from a specific conversation to JSON or TXT format.",
+    {
+      talker: z
+        .string()
+        .describe("The talker's username/wxid"),
+      format: z
+        .enum(["json", "txt"])
+        .optional()
+        .describe("Export format: json or txt (default json)"),
+    },
+    async (args) => handleToolCall("export_chat", args)
+  );
+
   return server;
 }
 

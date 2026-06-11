@@ -413,6 +413,35 @@ body {
   background: var(--bg-hover);
 }
 
+.context-menu {
+  position: fixed;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px var(--shadow);
+  z-index: 2000;
+  min-width: 140px;
+  padding: 4px 0;
+}
+
+.ctx-item {
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.ctx-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.stat-row-item:hover {
+  background: var(--bg-tertiary);
+  border-radius: var(--radius);
+  margin: -2px -4px;
+  padding: 2px 4px;
+}
+
 .date-separator {
   display: flex;
   align-items: center;
@@ -886,6 +915,41 @@ body {
   font-style: italic;
 }
 
+.voice-bubble {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 120px;
+  max-width: 320px;
+  cursor: default;
+}
+
+.voice-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.voice-dur {
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.voice-text {
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.voice-label {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
 .media-icon {
   font-size: 20px;
   font-style: normal;
@@ -1064,4 +1128,499 @@ body {
   align-items: center;
   justify-content: center;
   gap: 12px;
+}
+
+/* ===== 统计页面 ===== */
+.stats-hero {
+  position: relative;
+  background: linear-gradient(135deg, #1e3a5f 0%, #2d1b69 50%, #1a1a2e 100%);
+  border-radius: var(--radius-lg);
+  padding: 32px 28px;
+  margin-bottom: 24px;
+  overflow: hidden;
+}
+
+.stats-hero::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(ellipse at 30% 50%, rgba(59,130,246,0.15) 0%, transparent 50%),
+              radial-gradient(ellipse at 70% 50%, rgba(168,85,247,0.12) 0%, transparent 50%);
+  animation: heroGlow 8s ease-in-out infinite alternate;
+}
+
+@keyframes heroGlow {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(-5%, 3%) scale(1.1); }
+}
+
+.stats-hero-title {
+  position: relative;
+  font-size: 18px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.9);
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stats-hero-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.stats-hero-card {
+  background: rgba(255,255,255,0.06);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: var(--radius);
+  padding: 16px;
+  transition: all 0.3s ease;
+}
+
+.stats-hero-card:hover {
+  background: rgba(255,255,255,0.1);
+  border-color: rgba(255,255,255,0.15);
+  transform: translateY(-2px);
+}
+
+.stats-hero-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  margin-bottom: 10px;
+}
+
+.stats-hero-label {
+  font-size: 12px;
+  color: rgba(255,255,255,0.5);
+  margin-bottom: 4px;
+}
+
+.stats-hero-value {
+  font-size: 28px;
+  font-weight: 800;
+  background: linear-gradient(135deg, #fff 0%, rgba(255,255,255,0.7) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.stats-hero-sub {
+  font-size: 11px;
+  color: rgba(255,255,255,0.35);
+  margin-top: 4px;
+}
+
+/* 统计卡片 */
+.stats-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.stats-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--purple));
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.stats-card:hover::before {
+  opacity: 1;
+}
+
+.stats-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 4px 24px rgba(59,130,246,0.1);
+}
+
+.stats-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 环形图 */
+.donut-chart {
+  position: relative;
+  width: 180px;
+  height: 180px;
+  margin: 0 auto 16px;
+}
+
+.donut-chart svg {
+  transform: rotate(-90deg);
+}
+
+.donut-chart circle {
+  fill: none;
+  stroke-width: 28;
+  transition: stroke-dasharray 1s ease;
+}
+
+.donut-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+}
+
+.donut-center-value {
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.donut-center-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.donut-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  justify-content: center;
+}
+
+.donut-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.donut-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* 热力图 */
+.heatmap-grid {
+  display: grid;
+  grid-template-columns: repeat(24, 1fr);
+  gap: 3px;
+}
+
+.heatmap-cell {
+  aspect-ratio: 1;
+  border-radius: 3px;
+  background: var(--bg-tertiary);
+  transition: all 0.3s ease;
+  position: relative;
+  cursor: default;
+  min-width: 0;
+}
+
+.heatmap-cell:hover {
+  transform: scale(1.4);
+  z-index: 10;
+  box-shadow: 0 0 8px rgba(59,130,246,0.4);
+}
+
+.heatmap-cell[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.heatmap-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+}
+
+.heatmap-labels span {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.heatmap-row-labels {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-right: 6px;
+}
+
+.heatmap-row-labels span {
+  height: 0;
+  display: flex;
+  align-items: center;
+  font-size: 10px;
+  color: var(--text-muted);
+  flex: 1;
+}
+
+/* 排行榜 */
+.rank-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  transition: all 0.2s ease;
+  margin-bottom: 4px;
+}
+
+.rank-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.rank-badge {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.rank-badge.gold {
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  color: #78350f;
+  box-shadow: 0 0 10px rgba(251,191,36,0.3);
+}
+
+.rank-badge.silver {
+  background: linear-gradient(135deg, #d1d5db, #9ca3af);
+  color: #374151;
+  box-shadow: 0 0 10px rgba(156,163,175,0.2);
+}
+
+.rank-badge.bronze {
+  background: linear-gradient(135deg, #f97316, #ea580c);
+  color: #431407;
+  box-shadow: 0 0 10px rgba(249,115,22,0.2);
+}
+
+.rank-badge.normal {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+
+.rank-name {
+  width: 100px;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.rank-bar-wrap {
+  flex: 1;
+  height: 20px;
+  background: var(--bg-tertiary);
+  border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+}
+
+.rank-bar {
+  height: 100%;
+  border-radius: 10px;
+  transition: width 1s cubic-bezier(0.22, 1, 0.36, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.rank-bar::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
+  animation: rankShine 2s ease-in-out infinite;
+}
+
+@keyframes rankShine {
+  0% { left: -100%; }
+  50% { left: 100%; }
+  100% { left: 100%; }
+}
+
+.rank-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  width: 50px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* 趋势面积图 */
+.trend-chart {
+  height: 100px;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  position: relative;
+}
+
+.trend-bar {
+  flex: 1;
+  border-radius: 2px 2px 0 0;
+  min-height: 2px;
+  transition: height 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+  position: relative;
+}
+
+.trend-bar:hover {
+  filter: brightness(1.3);
+}
+
+.trend-bar[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  z-index: 20;
+}
+
+/* 趣味统计卡片 */
+.fun-fact {
+  background: linear-gradient(135deg, rgba(59,130,246,0.08), rgba(168,85,247,0.08));
+  border: 1px solid rgba(59,130,246,0.15);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  transition: all 0.3s ease;
+}
+
+.fun-fact:hover {
+  border-color: rgba(59,130,246,0.3);
+  background: linear-gradient(135deg, rgba(59,130,246,0.12), rgba(168,85,247,0.12));
+}
+
+.fun-fact-icon {
+  font-size: 28px;
+  flex-shrink: 0;
+}
+
+.fun-fact-text {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.fun-fact-text strong {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* 入场动画 */
+@keyframes fadeSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.stats-animate {
+  opacity: 0;
+  animation: fadeSlideUp 0.5s ease forwards;
+}
+
+.stats-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+@media (max-width: 768px) {
+  .stats-hero-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .stats-grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+[data-theme="light"] .stats-hero {
+  background: linear-gradient(135deg, #dbeafe 0%, #ede9fe 50%, #f0f9ff 100%);
+}
+
+[data-theme="light"] .stats-hero-title {
+  color: rgba(15,23,42,0.9);
+}
+
+[data-theme="light"] .stats-hero-value {
+  background: linear-gradient(135deg, #1e293b, #334155);
+  -webkit-background-clip: text;
+}
+
+[data-theme="light"] .stats-hero-card {
+  background: rgba(255,255,255,0.6);
+  border-color: rgba(15,23,42,0.08);
+}
+
+[data-theme="light"] .stats-hero-card:hover {
+  background: rgba(255,255,255,0.85);
+  border-color: rgba(15,23,42,0.12);
+}
+
+[data-theme="light"] .stats-hero-label {
+  color: rgba(15,23,42,0.5);
+}
+
+[data-theme="light"] .stats-hero-sub {
+  color: rgba(15,23,42,0.35);
 }

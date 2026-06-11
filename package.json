@@ -31,6 +31,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "hono": "^4.12.25",
     "sql.js": "^1.14.1",
+    "zod": "^3.25.0",
     "zstd-codec": "^0.1.5"
   }
 }

@@ -56,6 +56,11 @@ export function saveEnvFile(values: Record<string, string>): void {
 export function initConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   const envFile = loadEnvFile();
 
+  const envOverrides: Partial<AppConfig> = {};
+  for (const [k, v] of Object.entries(overrides)) {
+    if (v !== undefined) (envOverrides as Record<string, unknown>)[k] = v;
+  }
+
   _config = {
     ...DEFAULT_CONFIG,
     wechatDbSrcPath: envFile.WECHAT_DB_SRC_PATH || "",
@@ -64,7 +69,7 @@ export function initConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     wechatDataPath: envFile.WECHAT_DATA_PATH || "",
     imageKey: envFile.IMAGE_KEY || "",
     xorKey: envFile.XOR_KEY || "",
-    ...overrides,
+    ...envOverrides,
   } as AppConfig;
 
   if (!_config.dataDir) _config.dataDir = "data";

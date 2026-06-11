@@ -122,7 +122,7 @@ export async function getSessions(
     sql += ` ORDER BY nTime DESC`;
   }
 
-  sql += ` LIMIT ${limit} OFFSET ${offset}`;
+  sql += ` LIMIT ${Math.min(limit * 3, 500)} OFFSET ${offset}`;
 
   const rows = db.exec(sql, params);
   if (rows.length === 0) return [];
@@ -130,7 +130,7 @@ export async function getSessions(
   const usernames = rows[0].values.map((row: unknown[]) => String(row[0]));
   const contactMap = await loadContactMap(dataDir, usernames);
 
-  let results = rows[0].values.map((row: unknown[]) => {
+  const allResults = rows[0].values.map((row: unknown[]) => {
     const username = String(row[0]);
     const contact = contactMap.get(username);
     const isSystem = isSystemAccount(username);
@@ -146,11 +146,13 @@ export async function getSessions(
       unreadCount: Number(row[3]) || 0,
       isHidden: isSystem || Number(row[4]) === 1,
     };
-  }).filter(s => !s.isHidden);
+  });
+
+  let filtered = allResults.filter(s => !s.isHidden);
 
   if (keyword) {
     const kw = keyword.toLowerCase();
-    results = results.filter(s => {
+    filtered = filtered.filter(s => {
       const nickname = (s.nickname || "").toLowerCase();
       const remark = (s.remark || "").toLowerCase();
       return nickname.includes(kw) || remark.includes(kw) ||
@@ -158,7 +160,7 @@ export async function getSessions(
     });
   }
 
-  return results;
+  return filtered;
 }
 
 export async function loadContactMap(

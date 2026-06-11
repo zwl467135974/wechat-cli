@@ -39,6 +39,7 @@ let state = {
   contacts: [],
   searchResults: [],
   messageOffset: 0,
+  allLoaded: false,
   contactOffset: 0,
   searchOffset: 0,
   loading: false,
@@ -124,7 +125,14 @@ function renderMessageContent(msg) {
       bubble = `<div class="message-bubble media-bubble"><span class="media-icon">&#128247;</span> ${escapeHtml(msg.content)}</div>`;
     }
   } else if (msg.type === 34) {
-    bubble = `<div class="message-bubble media-bubble"><span class="media-icon">&#127908;</span> ${escapeHtml(msg.content)}</div>`;
+    const dur = msg.voiceDuration ? `${msg.voiceDuration}"` : '';
+    const icon = '<span class="voice-icon">&#127908;</span>';
+    const durTag = dur ? `<span class="voice-dur">${dur}</span>` : '';
+    if (msg.voiceText) {
+      bubble = `<div class="message-bubble voice-bubble">${icon}${durTag}<span class="voice-text">${escapeHtml(msg.voiceText)}</span></div>`;
+    } else {
+      bubble = `<div class="message-bubble voice-bubble">${icon}${durTag}<span class="voice-label">语音</span></div>`;
+    }
   } else if (msg.type === 43) {
     if (msg.mediaPath) {
       const videoSrc = `${API}/api/video?path=${encodeURIComponent(msg.mediaPath)}`;
@@ -164,7 +172,7 @@ function renderMessageContent(msg) {
   }
 
   return `
-    <div class="message-row ${side}">
+    <div class="message-row ${side}" data-raw-content="${escapeHtml(msg.content)}" oncontextmenu="showMsgMenu(event, this)">
       ${sender}
       ${bubble}
       <div class="message-time">${formatTime(msg.time)}</div>
@@ -238,6 +246,7 @@ async function loadMessages(talkerId, append) {
       state.messages = msgs;
     }
     state.messageOffset = append ? offset + msgs.length : msgs.length;
+    if (msgs.length < 50) state.allLoaded = true;
   } catch (e) {
     showToast('加载消息失败: ' + e.message, 'error');
   }
@@ -255,7 +264,7 @@ function renderChatPage() {
   } else if (state.messages.length === 0) {
     messagesHtml = '<div class="empty-state"><div class="empty-state-icon">💬</div><div class="empty-state-text">选择一个会话查看聊天记录</div></div>';
   } else {
-    const loadMore = state.messageOffset >= 50 ? `<div class="load-more-bar"><button class="btn btn-secondary btn-sm" onclick="loadOlder()">加载更多历史消息</button></div>` : '';
+    const loadMore = state.messageOffset >= 50 && !state.allLoaded ? `<div class="load-more-bar"><button class="btn btn-secondary btn-sm" onclick="loadOlder()">加载更多历史消息</button></div>` : '';
     const parts = [loadMore];
     let lastDate = '';
     for (const msg of state.messages) {
@@ -322,6 +331,7 @@ async function selectSession(username) {
   state.currentSession = username;
   state.messages = [];
   state.messageOffset = 0;
+  state.allLoaded = false;
   renderChatPage();
   await loadMessages(username);
   renderChatPage();
@@ -384,6 +394,78 @@ window.toggleTheme = function() {
   }
   localStorage.setItem('theme', next || 'dark');
   updateThemeBtn();
+};
+
+window.showMsgMenu = function(e, row) {
+  e.preventDefault();
+  const existing = $('#msgContextMenu');
+  if (existing) existing.remove();
+
+  const raw = row.getAttribute('data-raw-content') || '';
+  const img = row.querySelector('.chat-image');
+  const video = row.querySelector('.chat-video');
+
+  const menu = document.createElement('div');
+  menu.id = 'msgContextMenu';
+  menu.className = 'context-menu';
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 160) + 'px';
+  menu.style.top = Math.min(e.clientY, window.innerHeight - 100) + 'px';
+
+  let items = '';
+  if (raw) {
+    items += `<div class="ctx-item" onclick="copyText(this)">复制文本</div>`;
+  }
+  if (img) {
+    items += `<div class="ctx-item" onclick="copyImage(this)">复制图片地址</div>`;
+    items += `<div class="ctx-item" onclick="saveImage(this)">保存图片</div>`;
+  }
+  if (video) {
+    items += `<div class="ctx-item" onclick="copyVideo(this)">复制视频地址</div>`;
+  }
+  if (!items) return;
+  menu.innerHTML = items;
+
+  menu.querySelectorAll('.ctx-item').forEach(el => {
+    el._row = row;
+  });
+
+  document.body.appendChild(menu);
+  setTimeout(() => {
+    document.addEventListener('click', closeMsgMenu, { once: true });
+  }, 0);
+};
+
+function closeMsgMenu() {
+  const m = $('#msgContextMenu');
+  if (m) m.remove();
+}
+
+window.copyText = function(el) {
+  const raw = el._row.getAttribute('data-raw-content') || '';
+  navigator.clipboard.writeText(raw).then(() => showToast('已复制'));
+  closeMsgMenu();
+};
+
+window.copyImage = function(el) {
+  const img = el._row.querySelector('.chat-image');
+  if (img) { navigator.clipboard.writeText(img.src).then(() => showToast('已复制图片地址')); }
+  closeMsgMenu();
+};
+
+window.saveImage = function(el) {
+  const img = el._row.querySelector('.chat-image');
+  if (!img) return;
+  const a = document.createElement('a');
+  a.href = img.src;
+  a.download = 'image_' + Date.now();
+  a.click();
+  closeMsgMenu();
+};
+
+window.copyVideo = function(el) {
+  const video = el._row.querySelector('.chat-video');
+  if (video) { navigator.clipboard.writeText(video.src).then(() => showToast('已复制视频地址')); }
+  closeMsgMenu();
 };
 
 function updateThemeBtn() {
@@ -517,10 +599,31 @@ window.prevSearch = () => doSearch(state.searchKeyword, Math.max(0, state.search
 function renderDashboard() {
   mainContent().innerHTML = `
     <div class="page-container">
-      <h1 class="page-title">数据统计</h1>
       <div id="statsContent" style="text-align:center;padding:60px 0;color:var(--text-muted)">加载中...</div>
     </div>`;
   loadAndRenderStats();
+}
+
+function animateCount(el, target, duration) {
+  if (!duration) duration = 1200;
+  let start = 0;
+  const startTime = performance.now();
+  function tick(now) {
+    const elapsed = now - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    const current = Math.floor(eased * target);
+    el.textContent = current.toLocaleString();
+    if (progress < 1) requestAnimationFrame(tick);
+    else el.textContent = target.toLocaleString();
+  }
+  requestAnimationFrame(tick);
+}
+
+function statsStagger() {
+  document.querySelectorAll('.stats-animate').forEach((el, i) => {
+    el.style.animationDelay = (i * 0.08) + 's';
+  });
 }
 
 async function loadAndRenderStats() {
@@ -533,107 +636,195 @@ async function loadAndRenderStats() {
   }
 
   const personal = stats.totalSessions - stats.totalChatrooms;
-  const maxHour = Math.max(...stats.hourlyActivity, 1);
-
-  const hourBars = stats.hourlyActivity.map((c, i) => {
-    const pct = (c / maxHour) * 100;
-    return `<div style="display:flex;align-items:flex-end;gap:4px;height:80px">
-      <div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%">
-        <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px">${c > 0 ? c : ''}</div>
-        <div style="width:100%;background:var(--accent);border-radius:3px 3px 0 0;height:${pct}%;min-height:2px;transition:height 0.3s"></div>
-      </div>
-    </div>`;
-  }).join('');
-
-  const hourLabels = Array.from({length:24}, (_, i) => 
-    `<div style="flex:1;text-align:center;font-size:10px;color:var(--text-muted)">${i}</div>`
-  ).join('');
-
-  const maxDaily = Math.max(...stats.dailyActivity.map(d => d.count), 1);
-  const recentDays = stats.dailyActivity.slice(-30);
-  const maxRecent = Math.max(...recentDays.map(d => d.count), 1);
-
-  const dailyBars = recentDays.map(d => {
-    const pct = (d.count / maxRecent) * 100;
-    return `<div title="${d.date}: ${d.count}条" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:60px">
-      <div style="width:100%;background:var(--purple);border-radius:2px 2px 0 0;height:${pct}%;min-height:1px"></div>
-    </div>`;
-  }).join('');
-
-  const typeColors = {'文本':'#3b82f6','图片':'#22c55e','语音':'#f97316','视频':'#a855f7','表情':'#eab308','应用':'#06b6d4','系统':'#64748b','撤回':'#ef4444'};
-  const typeTotal = stats.typeDistribution.reduce((s, t) => s + t.count, 0) || 1;
-  const typeBarHtml = stats.typeDistribution.map(t => {
-    const pct = ((t.count / typeTotal) * 100).toFixed(1);
-    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-      <span style="width:50px;font-size:13px;color:var(--text-secondary)">${t.label}</span>
-      <div class="stat-bar" style="flex:1"><div class="stat-bar-fill" style="width:${pct}%;background:${typeColors[t.label]||'#3b82f6'}"></div></div>
-      <span style="width:70px;font-size:13px;text-align:right;color:var(--text-muted)">${t.count.toLocaleString()} (${pct}%)</span>
-    </div>`;
-  }).join('');
-
-  const maxTop = stats.topContacts.length > 0 ? stats.topContacts[0].count : 1;
-  const topHtml = stats.topContacts.slice(0, 15).map((c, i) => {
-    const pct = (c.count / maxTop) * 100;
-    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-      <span style="width:24px;font-size:13px;color:var(--text-muted)">${i+1}</span>
-      <span style="width:120px;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(c.nickname || c.username)}</span>
-      <div class="stat-bar" style="flex:1"><div class="stat-bar-fill" style="width:${pct}%;background:var(--accent)"></div></div>
-      <span style="width:60px;font-size:13px;text-align:right;color:var(--text-muted)">${c.count.toLocaleString()}</span>
-    </div>`;
-  }).join('');
-
   const earliest = stats.dateRange.earliest ? new Date(stats.dateRange.earliest).toLocaleDateString('zh-CN') : '-';
   const latest = stats.dateRange.latest ? new Date(stats.dateRange.latest).toLocaleDateString('zh-CN') : '-';
 
+  const typeColors = {
+    '文本':'#3b82f6','图片':'#22c55e','语音':'#f97316','视频':'#a855f7',
+    '表情':'#eab308','应用':'#06b6d4','系统':'#64748b','撤回':'#ef4444'
+  };
+
+  const typeTotal = stats.typeDistribution.reduce((s, t) => s + t.count, 0) || 1;
+
+  const r = 65;
+  const c = 2 * Math.PI * r;
+  let cumAngle = 0;
+  const donutSegments = stats.typeDistribution.map(t => {
+    const pct = t.count / typeTotal;
+    const dashLen = pct * c;
+    const seg = { label: t.label, count: t.count, pct, color: typeColors[t.label] || '#3b82f6', offset: -cumAngle, dash: `${dashLen} ${c - dashLen}` };
+    cumAngle += dashLen;
+    return seg;
+  });
+
+  const donutSvg = donutSegments.map(s =>
+    `<circle cx="90" cy="90" r="${r}" stroke="${s.color}" stroke-dasharray="${s.dash}" stroke-dashoffset="${s.offset}" style="transition:stroke-dasharray 1s ease,stroke-dashoffset 1s ease"/>`
+  ).join('');
+
+  const donutLegend = stats.typeDistribution.slice(0, 8).map(t => {
+    const pct = ((t.count / typeTotal) * 100).toFixed(1);
+    return `<div class="donut-legend-item"><span class="donut-legend-dot" style="background:${typeColors[t.label]||'#3b82f6'}"></span>${t.label} ${pct}%</div>`;
+  }).join('');
+
+  const maxHour = Math.max(...stats.hourlyActivity, 1);
+  const heatColors = ['var(--bg-tertiary)', 'rgba(59,130,246,0.25)', 'rgba(59,130,246,0.45)', 'rgba(59,130,246,0.65)', 'rgba(59,130,246,0.85)', 'rgba(59,130,246,1)'];
+  const hourCells = stats.hourlyActivity.map((count, i) => {
+    const ratio = count / maxHour;
+    let level;
+    if (ratio === 0) level = 0;
+    else if (ratio < 0.15) level = 1;
+    else if (ratio < 0.35) level = 2;
+    else if (ratio < 0.55) level = 3;
+    else if (ratio < 0.8) level = 4;
+    else level = 5;
+    return `<div class="heatmap-cell" style="background:${heatColors[level]}" data-tip="${i}时: ${count}条"></div>`;
+  }).join('');
+
+  const peakHour = stats.hourlyActivity.indexOf(Math.max(...stats.hourlyActivity));
+  const peakHourNext = (peakHour + 1) % 24;
+
+  const recentDays = stats.dailyActivity.slice(-30);
+  const maxRecent = Math.max(...recentDays.map(d => d.count), 1);
+  const trendColors = recentDays.map(d => {
+    const ratio = d.count / maxRecent;
+    if (ratio < 0.3) return 'var(--accent)';
+    if (ratio < 0.6) return 'var(--purple)';
+    return 'linear-gradient(0deg, #3b82f6, #a855f7)';
+  });
+
+  const trendBars = recentDays.map((d, i) => {
+    const pct = (d.count / maxRecent) * 100;
+    const bg = trendColors[i].includes('gradient') ? trendColors[i] : trendColors[i];
+    return `<div class="trend-bar" style="height:${Math.max(pct, 2)}%;background:${bg}" data-tip="${d.date}: ${d.count}条"></div>`;
+  }).join('');
+
+  const maxTop = stats.topContacts.length > 0 ? stats.topContacts[0].count : 1;
+  const topColors = ['#3b82f6', '#6366f1', '#8b5cf6', '#a855f7', '#7c3aed', '#3b82f6', '#2563eb', '#1d4ed8', '#3b82f6', '#6366f1',
+                     '#8b5cf6', '#a855f7', '#7c3aed', '#3b82f6', '#2563eb'];
+  const topHtml = stats.topContacts.slice(0, 15).map((contact, i) => {
+    const pct = (contact.count / maxTop) * 100;
+    const badgeClass = i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : 'normal';
+    const isChatroom = contact.username.includes('@chatroom');
+    const clickAttr = isChatroom ? `onclick="navigateTo('chat');selectSession('${escapeHtml(contact.username)}')" style="cursor:pointer"` : '';
+    return `<div ${clickAttr} class="rank-item" style="animation-delay:${i*0.06}s">
+      <div class="rank-badge ${badgeClass}">${i+1}</div>
+      <span class="rank-name" title="${escapeHtml(contact.nickname || contact.username)}">${escapeHtml(contact.nickname || contact.username)}</span>
+      <div class="rank-bar-wrap"><div class="rank-bar" data-w="${pct}" style="width:0%;background:linear-gradient(90deg, ${topColors[i]}, ${topColors[i]}cc)"></div></div>
+      <span class="rank-count">${contact.count.toLocaleString()}</span>
+    </div>`;
+  }).join('');
+
+  const topSender = stats.topContacts.length > 0 ? (stats.topContacts[0].nickname || stats.topContacts[0].username) : '???';
+  const avgDaily = stats.totalMessages > 0 && stats.dailyActivity.length > 0
+    ? Math.round(stats.totalMessages / stats.dailyActivity.length) : 0;
+
+  const funFacts = [];
+  funFacts.push({ icon: '🌙', text: `你最活跃的时段是 <strong>${peakHour}:00-${peakHourNext}:00</strong>，果然是个夜猫子` });
+  funFacts.push({ icon: '💬', text: `你和 <strong>${escapeHtml(topSender)}</strong> 聊得最多，一共 <strong>${stats.topContacts.length > 0 ? stats.topContacts[0].count.toLocaleString() : 0}</strong> 条消息` });
+  funFacts.push({ icon: '📊', text: `平均每天发送 <strong>${avgDaily.toLocaleString()}</strong> 条消息，相当于一本小册子了` });
+  if (stats.totalMessages > 0) {
+    const textPct = stats.typeDistribution.find(t => t.label === '文本');
+    if (textPct) funFacts.push({ icon: '✍️', text: `其中 <strong>${((textPct.count / stats.totalMessages) * 100).toFixed(1)}%</strong> 是纯文字，大约 <strong>${Math.round(textPct.count * 20 / 1000)}</strong> 千字` });
+  }
+
+  const funHtml = funFacts.map(f =>
+    `<div class="fun-fact"><div class="fun-fact-icon">${f.icon}</div><div class="fun-fact-text">${f.text}</div></div>`
+  ).join('');
+
   $('#statsContent').innerHTML = `
-    <div class="grid grid-4" style="margin-bottom:24px">
-      <div class="card">
-        <div class="card-title">总消息数</div>
-        <div class="card-value">${stats.totalMessages.toLocaleString()}</div>
-      </div>
-      <div class="card">
-        <div class="card-title">会话数</div>
-        <div class="card-value">${stats.totalSessions}</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">私聊 ${personal} / 群聊 ${stats.totalChatrooms}</div>
-      </div>
-      <div class="card">
-        <div class="card-title">联系人</div>
-        <div class="card-value">${stats.totalContacts.toLocaleString()}</div>
-      </div>
-      <div class="card">
-        <div class="card-title">时间跨度</div>
-        <div class="card-value" style="font-size:16px">${earliest} ~ ${latest}</div>
-      </div>
-    </div>
-    <div class="grid grid-2" style="margin-bottom:24px">
-      <div class="card">
-        <div class="card-title">消息类型分布</div>
-        <div style="margin-top:12px">${typeBarHtml || '<div style="color:var(--text-muted)">暂无数据</div>'}</div>
-      </div>
-      <div class="card">
-        <div class="card-title">最活跃会话 TOP 15</div>
-        <div style="margin-top:12px">${topHtml || '<div style="color:var(--text-muted)">暂无数据</div>'}</div>
-      </div>
-    </div>
-    <div class="grid grid-2">
-      <div class="card">
-        <div class="card-title">24小时活跃度</div>
-        <div style="margin-top:12px">
-          <div style="display:flex;gap:2px;align-items:flex-end;height:80px">${hourBars}</div>
-          <div style="display:flex;gap:2px;margin-top:4px">${hourLabels}</div>
+    <div class="stats-hero stats-animate">
+      <div class="stats-hero-title">聊天数据总览</div>
+      <div class="stats-hero-grid">
+        <div class="stats-hero-card">
+          <div class="stats-hero-icon" style="background:rgba(59,130,246,0.15);color:#60a5fa">💬</div>
+          <div class="stats-hero-label">总消息数</div>
+          <div class="stats-hero-value" id="statMsgCount">0</div>
+          <div class="stats-hero-sub">共 ${stats.totalMessages.toLocaleString()} 条</div>
+        </div>
+        <div class="stats-hero-card">
+          <div class="stats-hero-icon" style="background:rgba(168,85,247,0.15);color:#c084fc">👥</div>
+          <div class="stats-hero-label">会话数</div>
+          <div class="stats-hero-value" id="statSessionCount">0</div>
+          <div class="stats-hero-sub">私聊 ${personal} / 群聊 ${stats.totalChatrooms}</div>
+        </div>
+        <div class="stats-hero-card">
+          <div class="stats-hero-icon" style="background:rgba(34,197,94,0.15);color:#4ade80">📇</div>
+          <div class="stats-hero-label">联系人</div>
+          <div class="stats-hero-value" id="statContactCount">0</div>
+          <div class="stats-hero-sub">通讯录总人数</div>
+        </div>
+        <div class="stats-hero-card">
+          <div class="stats-hero-icon" style="background:rgba(249,115,22,0.15);color:#fb923c">📅</div>
+          <div class="stats-hero-label">时间跨度</div>
+          <div class="stats-hero-value" style="font-size:15px;line-height:1.4" id="statDateRange">${earliest}<br>~ ${latest}</div>
+          <div class="stats-hero-sub">${stats.dailyActivity.length} 天</div>
         </div>
       </div>
-      <div class="card">
-        <div class="card-title">近30天消息趋势</div>
-        <div style="margin-top:12px">
-          <div style="display:flex;gap:2px;align-items:flex-end;height:60px">${dailyBars}</div>
-          <div style="display:flex;justify-content:space-between;margin-top:4px">
-            <span style="font-size:10px;color:var(--text-muted)">${recentDays.length > 0 ? recentDays[0].date : ''}</span>
-            <span style="font-size:10px;color:var(--text-muted)">${recentDays.length > 0 ? recentDays[recentDays.length-1].date : ''}</span>
+    </div>
+
+    <div class="stats-grid-2">
+      <div class="stats-card stats-animate">
+        <div class="stats-section-title">📊 消息类型分布</div>
+        <div class="donut-chart">
+          <svg width="180" height="180" viewBox="0 0 180 180">${donutSvg}</svg>
+          <div class="donut-center">
+            <div class="donut-center-value">${typeTotal > 10000 ? (typeTotal/10000).toFixed(1)+'万' : typeTotal.toLocaleString()}</div>
+            <div class="donut-center-label">总消息</div>
           </div>
         </div>
+        <div class="donut-legend">${donutLegend || '<div style="color:var(--text-muted)">暂无数据</div>'}</div>
+      </div>
+      <div class="stats-card stats-animate">
+        <div class="stats-section-title">🏆 最活跃会话 TOP 15</div>
+        ${topHtml || '<div style="color:var(--text-muted)">暂无数据</div>'}
+      </div>
+    </div>
+
+    <div class="stats-grid-2">
+      <div class="stats-card stats-animate">
+        <div class="stats-section-title">🕐 24小时活跃热力图</div>
+        <div style="display:flex;align-items:flex-start;gap:0">
+          <div style="flex:1">
+            <div class="heatmap-grid">${hourCells}</div>
+            <div class="heatmap-labels"><span>0</span><span>6</span><span>12</span><span>18</span><span>23</span></div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:10px;justify-content:center">
+          <span style="font-size:10px;color:var(--text-muted)">少</span>
+          ${heatColors.map(c => `<div style="width:12px;height:12px;border-radius:2px;background:${c}"></div>`).join('')}
+          <span style="font-size:10px;color:var(--text-muted)">多</span>
+        </div>
+      </div>
+      <div class="stats-card stats-animate">
+        <div class="stats-section-title">📈 近30天消息趋势</div>
+        <div class="trend-chart">${trendBars}</div>
+        <div style="display:flex;justify-content:space-between;margin-top:6px">
+          <span style="font-size:10px;color:var(--text-muted)">${recentDays.length > 0 ? recentDays[0].date : ''}</span>
+          <span style="font-size:10px;color:var(--text-muted)">${recentDays.length > 0 ? recentDays[recentDays.length-1].date : ''}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="stats-card stats-animate" style="margin-bottom:24px">
+      <div class="stats-section-title">🎭 聊天画像</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px">
+        ${funHtml}
       </div>
     </div>`;
+
+  statsStagger();
+
+  setTimeout(() => {
+    animateCount(document.getElementById('statMsgCount'), stats.totalMessages);
+    animateCount(document.getElementById('statSessionCount'), stats.totalSessions);
+    animateCount(document.getElementById('statContactCount'), stats.totalContacts);
+  }, 200);
+
+  setTimeout(() => {
+    document.querySelectorAll('.rank-bar[data-w]').forEach(bar => {
+      bar.style.width = bar.dataset.w + '%';
+    });
+  }, 400);
 }
 
 function renderSetupPage() {
@@ -886,10 +1077,17 @@ async function init() {
     await loadSessions($('#sessionSearch')?.value);
     await checkStatus();
     if (state.page === 'chat' && state.currentSession && !state.loading) {
-      const msgs = await api(`/api/messages?talker_id=${encodeURIComponent(state.currentSession)}&limit=50&offset=0&reverse=true`);
-      state.messages = msgs;
-      state.messageOffset = msgs.length;
-      renderChatPage();
+      const chatEl = document.querySelector('.chat-area');
+      const wasAtBottom = chatEl && (chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 60);
+      const fresh = await api(`/api/messages?talker_id=${encodeURIComponent(state.currentSession)}&limit=50&offset=0&reverse=true`);
+      const existingSeqs = new Set(state.messages.map(m => m.seq));
+      const newOnly = fresh.filter(m => !existingSeqs.has(m.seq));
+      if (newOnly.length > 0) {
+        state.messages = [...state.messages, ...newOnly];
+        state.messageOffset += newOnly.length;
+        renderChatPage();
+      }
+      if (wasAtBottom && chatEl) chatEl.scrollTop = chatEl.scrollHeight;
     } else {
       renderPage();
     }

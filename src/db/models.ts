@@ -8,7 +8,6 @@ export interface Message {
   type: number;
   content: string;
   mediaPath?: string;
-  mediaMd5?: string;
   emojiUrl?: string;
   appType?: number;
   appUrl?: string;
@@ -17,6 +16,8 @@ export interface Message {
   referSender?: string;
   locationLabel?: string;
   locationPoiName?: string;
+  voiceDuration?: number;
+  voiceText?: string;
 }
 
 export interface Session {
