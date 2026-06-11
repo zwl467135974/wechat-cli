@@ -1,10 +1,8 @@
 """
 WeChat V4 数据库解密器 (SQLCipher 4)
 
-基于 wechat-decrypt 方案:
-- 纯 Python AES-256-CBC 逐页解密
-- SQLCipher 4 参数: page_size=4096, reserve=80, HMAC-SHA512
-- 依赖: pycryptodome
+纯 Python AES-256-CBC 逐页解密。
+依赖: pycryptodome
 
 用法:
   python decrypt_db_v2.py                     # 解密所有数据库

@@ -1,10 +1,8 @@
 """
 WeChat V4 数据库密钥提取 (SQLCipher 4)
 
-基于 wechat-decrypt (https://github.com/ylytdeng/wechat-decrypt) 方案:
-- 扫描 Weixin.exe 进程内存，匹配 x'<64hex_key><32hex_salt>' 模式
-- 使用 HMAC-SHA512 (PBKDF2-SHA512, iter=2) 验证密钥
-- 输出 all_keys.json
+扫描 Weixin.exe 进程内存，匹配 hex 密钥模式并通过 HMAC-SHA512 验证。
+输出 all_keys.json。
 """
 import ctypes
 import ctypes.wintypes as wt
