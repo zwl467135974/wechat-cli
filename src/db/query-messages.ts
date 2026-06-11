@@ -820,3 +820,282 @@ export async function getGlobalStats(dataDir: string): Promise<GlobalStats> {
     },
   };
 }
+
+export interface ChatStats {
+  talker: string;
+  nickname: string;
+  isGroup: boolean;
+  totalMessages: number;
+  myMessages: number;
+  theirMessages: number;
+  firstMessage: string | null;
+  lastMessage: string | null;
+  typeDistribution: { type: number; label: string; count: number }[];
+  hourlyActivity: number[];
+  dailyActivity: { date: string; count: number }[];
+  weekHourHeatmap: number[][];
+  avgDaily: number;
+  totalDays: number;
+  topWords: { word: string; count: number }[];
+  topSenders: { sender: string; nickname: string; count: number }[];
+  replyStats: {
+    myAvgReplyMin: number;
+    theirAvgReplyMin: number;
+    myReplies: number;
+    theirReplies: number;
+  };
+}
+
+const STOP_WORDS = new Set([
+  "的","了","在","是","我","你","他","她","它","们","这","那","有","不","就","也","都","要",
+  "会","对","说","和","与","或","但","而","如果","因为","所以","可以","没","什么","一个","这个",
+  "那个","吗","吧","啊","呢","哦","嗯","哈","呀","嘛","啦","哎","嘿","哦","噢","喔","诶","喂",
+  "好","行","是","能","把","被","让","给","从","到","用","为","着","过","地","得","很","还",
+  "去","来","又","再","才","已","更","最","比","跟","等","做","看","想","去","来","吃","买",
+  "个","一","二","三","两","几","多","少","大","小","上","下","中","前","后","里","外","时",
+  "然后","这样","那样","自己","现在","今天","明天","昨天","怎么","这么","那么","其实","觉得",
+  "应该","知道","时候","东西","地方","可以","已经","可能","可是","但是","而且","或者","不过",
+]);
+
+function extractWords(text: string): string[] {
+  const cleaned = text.replace(/[\s\n\r]+/g, " ").trim();
+  if (!cleaned) return [];
+  const words: string[] = [];
+  const segs = cleaned.split(/[\s,，。！？!?;；：:、~\-—""''「」【】()\(\)\[\]{}<>《》·…]+/);
+  for (const seg of segs) {
+    if (seg.length < 2 || seg.length > 8) continue;
+    if (/^[\d.]+$/.test(seg)) continue;
+    if (STOP_WORDS.has(seg)) continue;
+    if (/^[\x00-\x7F]+$/.test(seg) && seg.length < 3) continue;
+    words.push(seg);
+  }
+  return words;
+}
+
+export async function getChatStats(
+  dataDir: string,
+  talker: string
+): Promise<ChatStats | null> {
+  const shards = await getShards(dataDir);
+  const start = new Date(2010, 0, 1);
+  const end = new Date();
+  const targets = resolveShards(shards, start, end, talker);
+  if (targets.length === 0) return null;
+
+  let totalMessages = 0;
+  let myMessages = 0;
+  let theirMessages = 0;
+  let firstTime = Infinity;
+  let lastTime = 0;
+  const typeCounts: Record<number, number> = {};
+  const hourlyActivity = new Array(24).fill(0);
+  const dailyActivity: Record<string, number> = {};
+  const weekHourHeatmap: number[][] = Array.from({ length: 7 }, () => new Array(24).fill(0));
+  const wordCounts: Record<string, number> = {};
+  const senderCounts: Record<string, number> = {};
+
+  const typeLabels: Record<number, string> = {
+    1: "文本", 3: "图片", 34: "语音", 43: "视频",
+    47: "表情", 48: "位置", 49: "应用", 10000: "系统", 10002: "撤回",
+  };
+
+  const replyIntervals: { myReplyTime: number; theirReplyTime: number }[] = [];
+  let lastTimeBySender: Record<string, number> = {};
+  let prevSender = "";
+
+  for (const target of targets) {
+    const db = await getConnection(target.filePath);
+    const tableName = findMsgTable(db, talker, target.talkerId);
+    if (!tableName) continue;
+
+    const countRow = db.exec(`SELECT COUNT(*) FROM "${tableName}"`);
+    if (countRow.length > 0) totalMessages += Number(countRow[0].values[0][0]);
+
+    const senderRow = db.exec(
+      `SELECT (local_type & 0xFFFF) AS mt, COUNT(*) AS c FROM "${tableName}" GROUP BY mt ORDER BY c DESC`
+    );
+    if (senderRow.length > 0) {
+      for (const r of senderRow[0].values) {
+        const mt = Number(r[0]);
+        typeCounts[mt] = (typeCounts[mt] || 0) + Number(r[1]);
+      }
+    }
+
+    const timeRow = db.exec(`SELECT MIN(create_time), MAX(create_time) FROM "${tableName}"`);
+    if (timeRow.length > 0 && timeRow[0].values.length > 0) {
+      const minT = Number(timeRow[0].values[0][0]);
+      const maxT = Number(timeRow[0].values[0][1]);
+      if (minT && minT < firstTime) firstTime = minT;
+      if (maxT && maxT > lastTime) lastTime = maxT;
+    }
+
+    const hourlyRows = db.exec(
+      `SELECT CAST(strftime('%H', create_time, 'unixepoch', 'localtime') AS INTEGER) AS hr, COUNT(*) AS c FROM "${tableName}" GROUP BY hr`
+    );
+    if (hourlyRows.length > 0) {
+      for (const r of hourlyRows[0].values) {
+        hourlyActivity[Number(r[0])] += Number(r[1]);
+      }
+    }
+
+    const dailyRows = db.exec(
+      `SELECT strftime('%Y-%m-%d', create_time, 'unixepoch', 'localtime') AS d, COUNT(*) AS c FROM "${tableName}" GROUP BY d ORDER BY d`
+    );
+    if (dailyRows.length > 0) {
+      for (const r of dailyRows[0].values) {
+        const d = String(r[0]);
+        dailyActivity[d] = (dailyActivity[d] || 0) + Number(r[1]);
+      }
+    }
+
+    const weekHourRows = db.exec(
+      `SELECT CAST(strftime('%w', create_time, 'unixepoch', 'localtime') AS INTEGER) AS wd, CAST(strftime('%H', create_time, 'unixepoch', 'localtime') AS INTEGER) AS hr, COUNT(*) AS c FROM "${tableName}" GROUP BY wd, hr`
+    );
+    if (weekHourRows.length > 0) {
+      for (const r of weekHourRows[0].values) {
+        weekHourHeatmap[Number(r[0])][Number(r[1])] += Number(r[2]);
+      }
+    }
+
+    const myCount = db.exec(
+      `SELECT COUNT(*) FROM "${tableName}" WHERE status = 2`
+    );
+    if (myCount.length > 0) myMessages += Number(myCount[0].values[0][0]);
+
+    const theirCount = db.exec(
+      `SELECT COUNT(*) FROM "${tableName}" WHERE status != 2`
+    );
+    if (theirCount.length > 0) theirMessages += Number(theirCount[0].values[0][0]);
+
+    const isGroup = talker.endsWith("@chatroom");
+    if (isGroup) {
+      const senderRows = db.exec(
+        `SELECT message_content, status FROM "${tableName}"`
+      );
+      if (senderRows.length > 0) {
+        for (const r of senderRows[0].values) {
+          const raw = r[0];
+          const status = Number(r[1]);
+          let text = "";
+          if (raw instanceof Uint8Array || Buffer.isBuffer(raw)) {
+            text = await decodeMessageContent(Buffer.from(raw));
+          } else if (raw != null) {
+            text = String(raw);
+          }
+          if (!text) continue;
+          if (status === 2) continue;
+          const split = text.split(":\n", 2);
+          if (split.length === 2) {
+            const snd = split[0];
+            if (snd && snd.length < 60 && /^[\w@.]+$/.test(snd)) {
+              senderCounts[snd] = (senderCounts[snd] || 0) + 1;
+            }
+          }
+        }
+      }
+    }
+
+    const textRows = db.exec(
+      `SELECT message_content FROM "${tableName}" WHERE (local_type & 0xFFFF) = 1 ORDER BY create_time DESC LIMIT 500`
+    );
+    if (textRows.length > 0) {
+      for (const r of textRows[0].values) {
+        const text = String(r[0]);
+        for (const w of extractWords(text)) {
+          wordCounts[w] = (wordCounts[w] || 0) + 1;
+        }
+      }
+    }
+
+    const replyRows = db.exec(
+      `SELECT status, create_time FROM "${tableName}" WHERE (local_type & 0xFFFF) IN (1,3,34,43,47,49) ORDER BY create_time ASC`
+    );
+    if (replyRows.length > 0) {
+      for (const r of replyRows[0].values) {
+        const isSelf = Number(r[0]) === 2;
+        const time = Number(r[1]);
+        const sender = isSelf ? "self" : "other";
+        if (prevSender && prevSender !== sender && lastTimeBySender[prevSender]) {
+          const interval = time - lastTimeBySender[prevSender];
+          if (interval > 0 && interval < 3600) {
+            replyIntervals.push({
+              myReplyTime: isSelf ? interval : 0,
+              theirReplyTime: !isSelf ? interval : 0,
+            });
+          }
+        }
+        lastTimeBySender[sender] = time;
+        prevSender = sender;
+      }
+    }
+  }
+
+  const typeDistribution = Object.entries(typeCounts)
+    .map(([t, c]) => ({ type: Number(t), label: typeLabels[Number(t)] || `类型${t}`, count: c }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+
+  const dailyArray = Object.entries(dailyActivity)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, count]) => ({ date, count }));
+
+  const totalDays = dailyArray.length || 1;
+  const avgDaily = Math.round(totalMessages / totalDays);
+
+  const topWords = Object.entries(wordCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 80)
+    .map(([word, count]) => ({ word, count }));
+
+  let myReplySum = 0;
+  let myReplyCount = 0;
+  let theirReplySum = 0;
+  let theirReplyCount = 0;
+  for (const ri of replyIntervals) {
+    if (ri.myReplyTime > 0) { myReplySum += ri.myReplyTime; myReplyCount++; }
+    if (ri.theirReplyTime > 0) { theirReplySum += ri.theirReplyTime; theirReplyCount++; }
+  }
+
+  const map = await loadContactMap(dataDir, [talker]);
+  const contactInfo = map.get(talker);
+
+  const isGroup = talker.endsWith("@chatroom");
+  const topSendersRaw = Object.entries(senderCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 15)
+    .map(([sender, count]) => ({ sender, nickname: "", count }));
+
+  if (topSendersRaw.length > 0) {
+    const wxids = topSendersRaw.map(s => s.sender);
+    const senderMap = await loadContactMap(dataDir, wxids);
+    for (const s of topSendersRaw) {
+      const info = senderMap.get(s.sender);
+      if (info) s.nickname = info.remark || info.nickname || s.sender;
+    }
+  }
+
+  return {
+    talker,
+    nickname: contactInfo?.remark || contactInfo?.nickname || talker,
+    isGroup,
+    totalMessages,
+    myMessages,
+    theirMessages,
+    firstMessage: firstTime === Infinity ? null : new Date(firstTime * 1000).toISOString(),
+    lastMessage: lastTime === 0 ? null : new Date(lastTime * 1000).toISOString(),
+    typeDistribution,
+    hourlyActivity,
+    dailyActivity: dailyArray,
+    weekHourHeatmap,
+    avgDaily,
+    totalDays,
+    topWords,
+    topSenders: topSendersRaw,
+    replyStats: {
+      myAvgReplyMin: myReplyCount > 0 ? Math.round((myReplySum / myReplyCount) / 60) : 0,
+      theirAvgReplyMin: theirReplyCount > 0 ? Math.round((theirReplySum / theirReplyCount) / 60) : 0,
+      myReplies: myReplyCount,
+      theirReplies: theirReplyCount,
+    },
+  };
+}

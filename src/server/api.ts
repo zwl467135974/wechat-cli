@@ -6,6 +6,7 @@ import {
   getMessages,
   searchMessages,
   getGlobalStats,
+  getChatStats,
 } from "../db/query-messages.js";
 import { closeAll, findFilesByType } from "../db/manager.js";
 import { execPython } from "../python/runner.js";
@@ -156,6 +157,29 @@ app.get("/api/messages", async (c) => {
     reverse,
   });
   return c.json(messages);
+});
+
+let chatStatsCache: Map<string, { data: unknown; ts: number }> = new Map();
+const CHAT_STATS_TTL = 3 * 60 * 1000;
+
+app.get("/api/chat-stats", async (c) => {
+  const config = getConfig();
+  const talker = c.req.query("talker");
+  if (!talker) return c.json({ error: "talker is required" }, 400);
+
+  const cached = chatStatsCache.get(talker);
+  if (cached && Date.now() - cached.ts < CHAT_STATS_TTL) {
+    return c.json(cached.data);
+  }
+
+  try {
+    const stats = await getChatStats(config.dataDir, talker);
+    if (!stats) return c.json({ error: "No data" }, 404);
+    chatStatsCache.set(talker, { data: stats, ts: Date.now() });
+    return c.json(stats);
+  } catch (e: unknown) {
+    return c.json({ error: (e as Error).message }, 500);
+  }
 });
 
 app.get("/api/search", async (c) => {

@@ -300,7 +300,8 @@ function renderChatPage() {
             <div class="chat-header-title">${escapeHtml(name)}</div>
             <div class="chat-header-info">${escapeHtml(state.currentSession)}</div>
           </div>
-          ${state.currentSession.endsWith('@chatroom') ? `<button class="btn btn-secondary btn-sm" style="margin-left:auto" onclick="toggleMemberPanel()">成员</button>` : ''}
+          ${state.currentSession ? `<button class="btn btn-secondary btn-sm" style="margin-left:auto" onclick="toggleChatStatsPanel()">📊 统计</button>` : ''}
+          ${state.currentSession.endsWith('@chatroom') ? `<button class="btn btn-secondary btn-sm" style="margin-left:4px" onclick="toggleMemberPanel()">成员</button>` : ''}
           ${state.currentSession ? `<div style="margin-left:8px" class="export-dropdown">
             <button class="btn btn-secondary btn-sm" onclick="toggleExportMenu()">导出</button>
             <div class="export-menu" id="exportMenu">
@@ -313,6 +314,7 @@ function renderChatPage() {
         <div style="display:flex;flex:1;overflow:hidden">
           <div class="messages-container" id="messagesContainer" style="flex:1">${messagesHtml}</div>
           <div class="member-panel" id="memberPanel" style="display:none"></div>
+          <div class="chat-stats-panel" id="chatStatsPanel" style="display:none"></div>
         </div>
       ` : `
         <div class="empty-state">
@@ -383,6 +385,217 @@ window.toggleExportMenu = function() {
   if (!menu) return;
   menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
 };
+
+let chatStatsPanelVisible = false;
+window.toggleChatStatsPanel = async function() {
+  const panel = $('#chatStatsPanel');
+  if (!panel) return;
+  chatStatsPanelVisible = !chatStatsPanelVisible;
+  if (chatStatsPanelVisible) {
+    panel.style.display = 'block';
+    panel.innerHTML = '<div style="padding:16px;color:var(--text-muted)">加载中...</div>';
+    try {
+      const stats = await api(`/api/chat-stats?talker=${encodeURIComponent(state.currentSession)}`);
+      renderChatStatsPanel(panel, stats);
+    } catch (e) {
+      panel.innerHTML = `<div style="padding:16px;color:var(--danger)">加载失败: ${e.message}</div>`;
+    }
+  } else {
+    panel.style.display = 'none';
+  }
+};
+
+function renderChatStatsPanel(panel, s) {
+  const typeColors = {'文本':'#3b82f6','图片':'#22c55e','语音':'#f97316','视频':'#a855f7','表情':'#eab308','应用':'#06b6d4','系统':'#64748b','撤回':'#ef4444','位置':'#14b8a6'};
+
+  const total = s.totalMessages || 1;
+  const myPct = ((s.myMessages / total) * 100).toFixed(1);
+  const theirPct = ((s.theirMessages / total) * 100).toFixed(1);
+  const firstDate = s.firstMessage ? new Date(s.firstMessage).toLocaleDateString('zh-CN') : '-';
+  const lastDate = s.lastMessage ? new Date(s.lastMessage).toLocaleDateString('zh-CN') : '-';
+
+  const typeTotal = s.typeDistribution.reduce((a, t) => a + t.count, 0) || 1;
+  const typeItems = s.typeDistribution.map(t => {
+    const pct = ((t.count / typeTotal) * 100).toFixed(1);
+    const color = typeColors[t.label] || '#3b82f6';
+    return `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+      <span style="width:6px;height:6px;border-radius:50%;background:${color};flex-shrink:0"></span>
+      <span style="width:40px;font-size:11px;color:var(--text-secondary)">${t.label}</span>
+      <div style="flex:1;height:6px;background:var(--bg-tertiary);border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${color};border-radius:3px"></div></div>
+      <span style="width:55px;font-size:11px;text-align:right;color:var(--text-muted)">${t.count} (${pct}%)</span>
+    </div>`;
+  }).join('');
+
+  const maxHour = Math.max(...s.hourlyActivity, 1);
+  const hourBars = s.hourlyActivity.map((c, i) => {
+    const pct = (c / maxHour) * 100;
+    return `<div title="${i}时: ${c}条" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:50px">
+      <div style="width:100%;background:var(--accent);border-radius:2px 2px 0 0;height:${pct}%;min-height:1px;opacity:${0.4 + 0.6 * (c / maxHour)}"></div>
+    </div>`;
+  }).join('');
+
+  const recentDays = s.dailyActivity.slice(-30);
+  const maxDaily = Math.max(...recentDays.map(d => d.count), 1);
+  const trendBars = recentDays.map(d => {
+    const pct = (d.count / maxDaily) * 100;
+    return `<div title="${d.date}: ${d.count}条" style="flex:1;border-radius:2px 2px 0 0;height:${Math.max(pct, 2)}%;min-height:1px;background:${pct > 60 ? 'var(--purple)' : 'var(--accent)'}"></div>`;
+  }).join('');
+
+  const days = ['日','一','二','三','四','五','六'];
+  const maxWH = Math.max(...s.weekHourHeatmap.flat(), 1);
+  const heatColors = ['var(--bg-tertiary)', 'rgba(59,130,246,0.2)', 'rgba(59,130,246,0.4)', 'rgba(59,130,246,0.6)', 'rgba(59,130,246,0.8)', 'rgba(59,130,246,1)'];
+  const weekHeatmap = days.map((day, di) => {
+    const cells = Array.from({length:24}, (_, hi) => {
+      const val = s.weekHourHeatmap[di][hi];
+      const ratio = val / maxWH;
+      let level = 0;
+      if (ratio > 0 && ratio < 0.15) level = 1;
+      else if (ratio < 0.35) level = 2;
+      else if (ratio < 0.55) level = 3;
+      else if (ratio < 0.8) level = 4;
+      else if (ratio > 0) level = 5;
+      return `<div style="width:10px;height:10px;border-radius:2px;background:${heatColors[level]}" title="周${day} ${hi}时: ${val}条"></div>`;
+    }).join('');
+    return `<div style="display:flex;align-items:center;gap:2px"><span style="width:14px;font-size:9px;color:var(--text-muted)">${day}</span>${cells}</div>`;
+  }).join('');
+
+  const maxWord = s.topWords.length > 0 ? s.topWords[0].count : 1;
+  const wordCloud = s.topWords.slice(0, 40).map(w => {
+    const ratio = w.count / maxWord;
+    const size = Math.round(10 + ratio * 18);
+    const opacity = (0.4 + ratio * 0.6).toFixed(2);
+    const hue = Math.round(200 + (1 - ratio) * 80);
+    return `<span style="font-size:${size}px;opacity:${opacity};color:hsl(${hue},70%,60%);cursor:default;line-height:1.6;padding:0 2px" title="${w.word}: ${w.count}次">${escapeHtml(w.word)}</span>`;
+  }).join(' ');
+
+  const peakHour = s.hourlyActivity.indexOf(Math.max(...s.hourlyActivity));
+
+  const tags = [];
+  if (s.isGroup) {
+    const topSender = (s.topSenders && s.topSenders[0]) ? s.topSenders[0] : null;
+    const topName = topSender ? escapeHtml(topSender.nickname || topSender.sender) : '某人';
+    if (topSender) tags.push({icon:'👑',text:`最活跃的是 <strong>${topName}</strong>，发了 <strong>${topSender.count.toLocaleString()}</strong> 条`});
+    tags.push({icon:'💬',text:`你发了 <strong>${s.myMessages.toLocaleString()}</strong> 条，占 <strong>${((s.myMessages/(s.totalMessages||1))*100).toFixed(1)}%</strong>`});
+    const memberCount = (s.topSenders || []).length + 1;
+    tags.push({icon:'👥',text:`活跃成员约 <strong>${memberCount}</strong> 人`});
+  } else {
+    if (s.myMessages > s.theirMessages * 1.3) tags.push({icon:'🎤',text:`你比较话多，发了 <strong>${s.myMessages.toLocaleString()}</strong> 条，对方 <strong>${s.theirMessages.toLocaleString()}</strong> 条`});
+    else if (s.theirMessages > s.myMessages * 1.3) tags.push({icon:'🎤',text:`TA更爱说话，发了 <strong>${s.theirMessages.toLocaleString()}</strong> 条，你 <strong>${s.myMessages.toLocaleString()}</strong> 条`});
+    else tags.push({icon:'🎤',text:`势均力敌！你 <strong>${s.myMessages.toLocaleString()}</strong> 条，TA <strong>${s.theirMessages.toLocaleString()}</strong> 条`});
+
+    if (s.replyStats.myAvgReplyMin > 0 && s.replyStats.theirAvgReplyMin > 0) {
+      if (s.replyStats.myAvgReplyMin < s.replyStats.theirAvgReplyMin) {
+        tags.push({icon:'⚡',text:`你更"秒回"，平均 <strong>${s.replyStats.myAvgReplyMin}</strong> 分钟，TA <strong>${s.replyStats.theirAvgReplyMin}</strong> 分钟`});
+      } else {
+        tags.push({icon:'🐢',text:`TA更"秒回"，平均 <strong>${s.replyStats.theirAvgReplyMin}</strong> 分钟，你 <strong>${s.replyStats.myAvgReplyMin}</strong> 分钟`});
+      }
+    }
+  }
+
+  tags.push({icon:'🌙',text:`最活跃的时段是 <strong>${peakHour}:00-${(peakHour+1)%24}:00</strong>`});
+  tags.push({icon:'📊',text:`日均 <strong>${s.avgDaily}</strong> 条，持续 <strong>${s.totalDays}</strong> 天`});
+
+  const emojiCount = s.typeDistribution.find(t => t.label === '表情');
+  if (emojiCount && emojiCount.count > 0) {
+    tags.push({icon:'😄',text:`共发表情 <strong>${emojiCount.count.toLocaleString()}</strong> 个，${emojiCount.count > 100 ? '表情包大户' : '含蓄表达'}`});
+  }
+
+  const tagHtml = tags.map(t => `<div class="fun-fact"><div class="fun-fact-icon">${t.icon}</div><div class="fun-fact-text">${t.text}</div></div>`).join('');
+
+  panel.innerHTML = `
+    <div style="position:sticky;top:0;z-index:1;background:var(--bg-secondary);padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+      <span style="font-weight:600;font-size:14px">📊 会话统计</span>
+      <button class="btn btn-secondary btn-sm" onclick="toggleChatStatsPanel()" style="padding:2px 8px">✕</button>
+    </div>
+    <div style="padding:12px 16px">
+
+      <div style="text-align:center;margin-bottom:16px">
+        <div style="font-size:28px;font-weight:800;color:var(--accent)">${s.totalMessages.toLocaleString()}</div>
+        <div style="font-size:12px;color:var(--text-muted)">总消息数</div>
+      </div>
+
+      ${s.isGroup ? (() => {
+        const senders = [{sender:'我', nickname:'我', count: s.myMessages}, ...(s.topSenders || [])].sort((a,b) => b.count - a.count);
+        const maxS = senders[0]?.count || 1;
+        const rows = senders.slice(0, 10).map((m, i) => {
+          const pct = ((m.count / s.totalMessages) * 100).toFixed(1);
+          const barW = ((m.count / maxS) * 100).toFixed(1);
+          const medal = i === 0 ? 'background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#78350f;box-shadow:0 0 6px rgba(251,191,36,0.3)' : i === 1 ? 'background:linear-gradient(135deg,#d1d5db,#9ca3af);color:#374151' : i === 2 ? 'background:linear-gradient(135deg,#f97316,#ea580c);color:#431407' : 'background:var(--bg-tertiary);color:var(--text-muted)';
+          const name = m.sender === '我' ? '我' : escapeHtml(m.nickname || m.sender);
+          return `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+            <span style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;${medal}">${i+1}</span>
+            <span style="width:56px;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0">${name}</span>
+            <div style="flex:1;height:6px;background:var(--bg-tertiary);border-radius:3px;overflow:hidden"><div style="height:100%;width:${barW}%;background:var(--accent);border-radius:3px"></div></div>
+            <span style="font-size:10px;color:var(--text-muted);width:48px;text-align:right">${pct}%</span>
+          </div>`;
+        }).join('');
+        return `<div style="margin-bottom:16px">
+          <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:8px">成员发言排行</div>
+          ${rows}
+        </div>`;
+      })() : `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+        <div style="background:var(--bg-tertiary);border-radius:var(--radius);padding:10px;text-align:center">
+          <div style="font-size:18px;font-weight:700">${s.myMessages.toLocaleString()}</div>
+          <div style="font-size:11px;color:var(--text-muted)">我 (${myPct}%)</div>
+        </div>
+        <div style="background:var(--bg-tertiary);border-radius:var(--radius);padding:10px;text-align:center">
+          <div style="font-size:18px;font-weight:700">${s.theirMessages.toLocaleString()}</div>
+          <div style="font-size:11px;color:var(--text-muted)">TA (${theirPct}%)</div>
+        </div>
+      </div>`}
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+        <div style="font-size:11px;color:var(--text-muted)">首条消息 <strong style="color:var(--text-primary)">${firstDate}</strong></div>
+        <div style="font-size:11px;color:var(--text-muted);text-align:right">最近消息 <strong style="color:var(--text-primary)">${lastDate}</strong></div>
+      </div>
+
+      <div style="margin-bottom:16px">
+        <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:8px">消息类型</div>
+        ${typeItems || '<div style="font-size:11px;color:var(--text-muted)">暂无</div>'}
+      </div>
+
+      <div style="margin-bottom:16px">
+        <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:8px">活跃时段</div>
+        <div style="display:flex;gap:1px;align-items:flex-end;height:50px">${hourBars}</div>
+        <div style="display:flex;justify-content:space-between;margin-top:2px">
+          <span style="font-size:9px;color:var(--text-muted)">0</span>
+          <span style="font-size:9px;color:var(--text-muted)">6</span>
+          <span style="font-size:9px;color:var(--text-muted)">12</span>
+          <span style="font-size:9px;color:var(--text-muted)">18</span>
+          <span style="font-size:9px;color:var(--text-muted)">23</span>
+        </div>
+      </div>
+
+      <div style="margin-bottom:16px">
+        <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:8px">周×时热力图</div>
+        <div style="display:flex;gap:2px">
+          <div style="display:flex;flex-direction:column;gap:2px;padding-top:0">
+            <span style="height:10px;font-size:9px;color:var(--text-muted);width:14px"></span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            ${Array.from({length:24}, (_, i) => i % 6 === 0 ? `<span style="font-size:9px;color:var(--text-muted);width:10px;text-align:center">${i}</span>` : '<span style="width:10px"></span>').join('')}
+          </div>
+        </div>
+        <div style="margin-top:2px">${weekHeatmap}</div>
+      </div>
+
+      ${recentDays.length > 0 ? `<div style="margin-bottom:16px">
+        <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:8px">近30天趋势</div>
+        <div style="display:flex;gap:1px;align-items:flex-end;height:40px">${trendBars}</div>
+      </div>` : ''}
+
+      ${s.topWords.length > 0 ? `<div style="margin-bottom:16px">
+        <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:8px">高频词</div>
+        <div style="line-height:2;text-align:center">${wordCloud}</div>
+      </div>` : ''}
+
+      <div style="margin-bottom:16px">
+        <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:8px">聊天画像</div>
+        ${tagHtml}
+      </div>
+
+    </div>`;
+}
 
 window.toggleTheme = function() {
   const current = document.documentElement.getAttribute('data-theme');
