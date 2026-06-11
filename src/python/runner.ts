@@ -16,10 +16,14 @@ export async function execPython(
 
   const argsList = [scriptPath, "--args", JSON.stringify(args)];
 
+  const env: Record<string, string> = { ...process.env as Record<string, string> };
+  if (config.wechatDbSrcPath) env.WECHAT_DB_SRC_PATH = config.wechatDbSrcPath;
+  if (config.wechatDataPath) env.WECHAT_DATA_PATH = config.wechatDataPath;
+
   return new Promise((resolve, reject) => {
     const proc = spawn(pythonPath, argsList, {
       cwd: PYTHON_DIR,
-      env: { ...process.env },
+      env,
     });
 
     let stdout = "";

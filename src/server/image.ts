@@ -72,6 +72,7 @@ export function resolveImagePath(
   preferOriginal = false
 ): string | null {
   if (!srcPath) return null;
+  if (mediaPath.includes("..")) return null;
 
   const srcRoot = path.dirname(srcPath);
 
@@ -94,6 +95,7 @@ export function resolveVideoPath(
   mediaPath: string
 ): string | null {
   if (!srcPath) return null;
+  if (mediaPath.includes("..")) return null;
 
   const srcRoot = path.dirname(srcPath);
   const extensions = [".mp4", ".dat", ""];

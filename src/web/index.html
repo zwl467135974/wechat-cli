@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>微信聊天助手</title>
   <link rel="stylesheet" href="/assets/style.css">
+  <style>.file-link{color:var(--accent,#60a5fa);text-decoration:underline;cursor:pointer}</style>
 </head>
 <body>
 <div id="app">
@@ -110,8 +111,19 @@ function getTypeTag(type) {
 }
 
 function renderMessageContent(msg) {
-  if (msg.type === 10000 || msg.type === 10002) {
+  if (msg.type === 10000) {
     return `<div class="message-system"><span class="message-bubble">${escapeHtml(msg.content)}</span></div>`;
+  }
+  if (msg.type === 10002) {
+    let recallText = msg.content;
+    const cdataMatch = msg.content.match(/<replacemsg><!\[CDATA\[(.*?)\]\]><\/replacemsg>/);
+    if (cdataMatch) {
+      recallText = cdataMatch[1];
+    } else {
+      const plainMatch = msg.content.match(/<replacemsg>(.*?)<\/replacemsg>/);
+      if (plainMatch) recallText = plainMatch[1];
+    }
+    return `<div class="message-system"><span class="message-bubble">${escapeHtml(recallText)}</span></div>`;
   }
   const side = msg.isSelf ? 'self' : 'other';
   const sender = (!msg.isSelf && msg.isChatRoom) ? `<div class="message-sender">${escapeHtml(msg.sender || '')}</div>` : '';
@@ -161,10 +173,12 @@ function renderMessageContent(msg) {
     const title = lines[0] || '[应用消息]';
     const desc = lines.slice(1).join('\n');
     const isReply = msg.appType === 57 && msg.referContent;
-    const link = msg.appUrl && msg.appType !== 57 ? `<a class="app-link" href="${escapeHtml(msg.appUrl)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : `<span>${escapeHtml(title)}</span>`;
+    const isFile = msg.appType === 6 && msg.mediaPath;
+    const fileLink = isFile ? `<a href="${API}/api/file?path=${encodeURIComponent(msg.mediaPath)}" target="_blank" class="file-link">[文件] ${escapeHtml(title)}</a>` : '';
+    const link = isFile ? fileLink : (msg.appUrl && msg.appType !== 57 ? `<a class="app-link" href="${escapeHtml(msg.appUrl)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : `<span>${escapeHtml(title)}</span>`);
     const thumb = msg.appThumbUrl ? `<img class="app-thumb" src="${msg.appThumbUrl}" loading="lazy" onerror="this.remove()">` : '';
     const refHtml = isReply ? `<div class="refer-block">▎${escapeHtml(msg.referSender || '')}: ${escapeHtml((msg.referContent || '').substring(0, 100))}</div>` : '';
-    const descHtml = desc && !isReply ? `<div class="app-desc">${escapeHtml(desc.substring(0, 200))}${desc.length > 200 ? '...' : ''}</div>` : '';
+    const descHtml = desc && !isReply && !isFile ? `<div class="app-desc">${escapeHtml(desc.substring(0, 200))}${desc.length > 200 ? '...' : ''}</div>` : '';
     bubble = `<div class="message-bubble app-bubble">${thumb}${refHtml}<div class="app-title">${link}</div>${descHtml}</div>`;
   } else {
     const tag = getTypeTag(msg.type);
@@ -1103,7 +1117,7 @@ function renderSetupPage() {
             <label>微信路径（留空自动检测）</label>
             <input class="input-field" id="setupWxPath" placeholder="C:\\Program Files\\Tencent\\Weixin\\Weixin.exe">
           </div>
-          <button class="btn btn-primary" onclick="doExtractKey()">提取密钥</button>
+          <button class="btn btn-primary" onclick="doExtractKey(this)">提取密钥</button>
           <div id="keyResult" class="log-output" style="margin-top:12px;display:none"></div>
         </div>
 
@@ -1117,14 +1131,14 @@ function renderSetupPage() {
             <label>微信数据路径</label>
             <input class="input-field" id="setupSrcPath" placeholder="例如 C:\\Users\\xxx\\Documents\\WeChat Files\\wxid_xxx">
           </div>
-          <button class="btn btn-primary" onclick="doDecrypt()">开始解密</button>
+          <button class="btn btn-primary" onclick="doDecrypt(this)">开始解密</button>
           <div id="decryptResult" class="log-output" style="margin-top:12px;display:none"></div>
         </div>
 
         <div class="setup-step">
           <h3><span class="step-number">2.5</span> 扫描图片密钥</h3>
           <p style="color:var(--text-secondary);margin-bottom:12px">如需查看图片，需先扫描微信进程内存获取图片解密密钥。请确保微信正在运行且已查看过部分图片。</p>
-          <button class="btn btn-primary" onclick="doScanImageKey()">扫描图片密钥</button>
+          <button class="btn btn-primary" onclick="doScanImageKey(this)">扫描图片密钥</button>
           <div id="imageKeyResult" class="log-output" style="margin-top:12px;display:none"></div>
         </div>
 
@@ -1137,7 +1151,10 @@ function renderSetupPage() {
     </div>`;
 }
 
-window.doExtractKey = async function() {
+window.doExtractKey = async function(btn) {
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = origText + '...';
   const el = $('#keyResult');
   el.style.display = 'block';
   el.textContent = '正在提取密钥...（如提示请登录微信）';
@@ -1157,10 +1174,16 @@ window.doExtractKey = async function() {
     }
   } catch (e) {
     el.textContent = '错误: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
   }
 };
 
-window.doDecrypt = async function() {
+window.doDecrypt = async function(btn) {
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = origText + '...';
   const el = $('#decryptResult');
   el.style.display = 'block';
   el.textContent = '正在解密...';
@@ -1186,10 +1209,16 @@ window.doDecrypt = async function() {
     await checkStatus();
   } catch (e) {
     el.textContent = '错误: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
   }
 };
 
-window.doScanImageKey = async function() {
+window.doScanImageKey = async function(btn) {
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = origText + '...';
   const el = $('#imageKeyResult');
   el.style.display = 'block';
   el.textContent = '正在扫描微信进程内存...';
@@ -1203,6 +1232,9 @@ window.doScanImageKey = async function() {
     }
   } catch (e) {
     el.textContent = '错误: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
   }
 };
 

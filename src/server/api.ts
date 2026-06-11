@@ -5,10 +5,9 @@ import { getSessions, getContacts, getChatRoomMembers } from "../db/query-contac
 import {
   getMessages,
   searchMessages,
-  getGlobalStats,
-  getChatStats,
   clearShardCache,
 } from "../db/query-messages.js";
+import { getGlobalStats, getChatStats } from "../db/stats.js";
 import { closeAll, findFilesByType } from "../db/manager.js";
 import { execPython } from "../python/runner.js";
 import { getConfig, saveEnvFile } from "../config.js";
@@ -29,11 +28,16 @@ import { fileURLToPath } from "node:url";
 const app = new Hono();
 
 app.use("*", cors());
-app.use("*", async (c, next) => {
+
+const AUTH_TOKEN = process.env.AUTH_TOKEN || "";
+
+app.use("/api/*", async (c, next) => {
+  if (!AUTH_TOKEN) return await next();
+  const token = c.req.header("Authorization")?.replace("Bearer ", "") || c.req.query("token") || "";
+  if (token !== AUTH_TOKEN) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
   await next();
-  c.res.headers.set("Cache-Control", "no-store, no-cache, must-revalidate");
-  c.res.headers.set("Pragma", "no-cache");
-  c.res.headers.set("Expires", "0");
 });
 
 app.get("/api/health", (c) => c.json({ status: "ok" }));
@@ -148,6 +152,8 @@ app.get("/api/messages", async (c) => {
   const limit = Number(c.req.query("limit")) || 50;
   const offset = Number(c.req.query("offset")) || 0;
   const reverse = c.req.query("reverse") !== "false";
+  const startTime = c.req.query("start_time") ? Number(c.req.query("start_time")) : undefined;
+  const endTime = c.req.query("end_time") ? Number(c.req.query("end_time")) : undefined;
 
   if (!talkerId) {
     return c.json({ error: "talker_id is required" }, 400);
@@ -158,6 +164,8 @@ app.get("/api/messages", async (c) => {
     limit,
     offset,
     reverse,
+    startTime,
+    endTime,
   });
   return c.json(messages);
 });
@@ -390,6 +398,9 @@ app.get("/api/video", async (c) => {
   if (!mediaPath) {
     return c.json({ error: "path is required" }, 400);
   }
+  if (mediaPath.includes("..")) {
+    return c.json({ error: "Invalid path" }, 400);
+  }
 
   const config = getConfig();
   const videoPath = resolveVideoPath(config.wechatDbSrcPath, mediaPath);
@@ -435,6 +446,58 @@ app.get("/api/image-key", (c) => {
   return c.json(getImageKeyStatus());
 });
 
+app.get("/api/file", async (c) => {
+  const mediaPath = c.req.query("path");
+  if (!mediaPath) {
+    return c.json({ error: "path is required" }, 400);
+  }
+  if (mediaPath.includes("..")) {
+    return c.json({ error: "Invalid path" }, 400);
+  }
+
+  const config = getConfig();
+  if (!config.wechatDbSrcPath) {
+    return c.json({ error: "WeChat data path not configured" }, 503);
+  }
+
+  const srcRoot = path.dirname(config.wechatDbSrcPath);
+  const fullPath = path.join(srcRoot, mediaPath);
+  if (!path.resolve(fullPath).startsWith(path.resolve(srcRoot))) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+
+  if (!fs.existsSync(fullPath)) {
+    return c.json({ error: "File not found" }, 404);
+  }
+
+  const stat = fs.statSync(fullPath);
+  if (stat.size > 500 * 1024 * 1024) {
+    return c.json({ error: "File too large (max 500MB)" }, 400);
+  }
+
+  const ext = path.extname(fullPath).toLowerCase();
+  const mimeMap: Record<string, string> = {
+    ".pdf": "application/pdf", ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls": "application/vnd.ms-excel", ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".ppt": "application/vnd.ms-powerpoint", ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".zip": "application/zip", ".rar": "application/x-rar-compressed",
+    ".7z": "application/x-7z-compressed", ".txt": "text/plain",
+    ".mp3": "audio/mpeg", ".wav": "audio/wav",
+  };
+
+  const filename = path.basename(fullPath);
+  const stream = fs.createReadStream(fullPath);
+  return new Response(stream as any, {
+    headers: {
+      "Content-Type": mimeMap[ext] || "application/octet-stream",
+      "Content-Length": String(stat.size),
+      "Content-Disposition": `attachment; filename="${encodeURIComponent(filename)}"`,
+      "Cache-Control": "public, max-age=3600",
+    },
+  });
+});
+
 app.post("/api/scan-image-key", async (c) => {
   const result = await scanImageKey();
   if (result) {
@@ -462,10 +525,13 @@ app.get("*", async (c) => {
   if (urlPath.startsWith("/api")) {
     return c.json({ error: "Not found" }, 404);
   }
-  const filePath = path.join(webDir, urlPath === "/" ? "index.html" : urlPath);
-  if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-    const content = fs.readFileSync(filePath);
-    const ext = path.extname(filePath);
+  const resolved = path.resolve(webDir, urlPath === "/" ? "index.html" : urlPath);
+  if (!resolved.startsWith(webDir)) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+  if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
+    const content = fs.readFileSync(resolved);
+    const ext = path.extname(resolved);
     const mimeTypes: Record<string, string> = {
       ".html": "text/html",
       ".css": "text/css",
@@ -478,8 +544,7 @@ app.get("*", async (c) => {
       headers: { "Content-Type": mimeTypes[ext] || "application/octet-stream" },
     });
   }
-  const indexPath = path.join(webDir, "index.html");
-  const indexContent = fs.readFileSync(indexPath);
+  const indexContent = fs.readFileSync(path.join(webDir, "index.html"));
   return new Response(indexContent, {
     headers: { "Content-Type": "text/html" },
   });

@@ -109,13 +109,21 @@ def main():
     parser.add_argument("--keys", type=str, default=None, help="密钥文件路径")
     parser.add_argument("--db-dir", type=str, default=None, help="DB目录")
     parser.add_argument("--out-dir", type=str, default=None, help="输出目录")
+    parser.add_argument("--args", type=str, default=None, help="JSON格式参数")
     args = parser.parse_args()
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_dir = os.path.dirname(script_dir)
 
-    db_dir = args.db_dir or os.path.join("D:", os.sep, "weixinDoc", "xwechat_files", "wxid_oofdngwmbpok21_1562", "db_storage")
-    out_dir = args.out_dir or os.path.join(project_dir, "decrypted")
+    json_args = {}
+    if args.args:
+        try:
+            json_args = json.loads(args.args)
+        except json.JSONDecodeError:
+            pass
+
+    db_dir = args.db_dir or json_args.get("db_dir") or os.environ.get("WECHAT_DB_SRC_PATH", "")
+    out_dir = args.out_dir or json_args.get("out_dir") or os.path.join(project_dir, "decrypted")
     keys_file = args.keys or os.path.join(script_dir, "all_keys.json")
 
     print("=" * 60)

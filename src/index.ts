@@ -1,43 +1,25 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { serve } from "@hono/node-server";
-import { spawn } from "node:child_process";
 import { z } from "zod";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { initConfig } from "./config.js";
+import { initConfig, getConfig } from "./config.js";
 import { handleToolCall } from "./tools/handlers.js";
 import { app } from "./server/api.js";
 import { closeAll } from "./db/manager.js";
 import { clearShardCache } from "./db/query-messages.js";
 import { execPython } from "./python/runner.js";
-import { getConfig } from "./config.js";
 import fs from "node:fs";
 
 declare global {
-  // eslint-disable-next-line no-var
   var __wechatLastRefresh: string | undefined;
 }
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PYTHON_DIR = path.resolve(__dirname, "../python");
-
-function runDecrypt(dbDir: string, outDir: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const scriptPath = path.join(PYTHON_DIR, "decrypt_db_v2.py");
-    const proc = spawn("python", [scriptPath, "--db-dir", dbDir, "--out-dir", outDir], {
-      cwd: PYTHON_DIR,
-      env: { ...process.env },
-    });
-    let stdout = "";
-    let stderr = "";
-    proc.stdout.on("data", (d: unknown) => { stdout += String(d); });
-    proc.stderr.on("data", (d: unknown) => { stderr += String(d); });
-    proc.on("close", (code: number | null) => {
-      if (code === 0) resolve(stdout.trim());
-      else reject(new Error(stderr || stdout));
-    });
-    proc.on("error", (err: Error) => reject(err));
+async function runDecrypt(dbDir: string, outDir: string): Promise<string> {
+  return execPython("decrypt_db_v2.py", {
+    db_dir: dbDir,
+    out_dir: outDir,
   });
 }
 
@@ -49,124 +31,122 @@ function createMcpServer() {
 
   server.tool(
     "decrypt_database",
-    "Decrypt WeChat encrypted database files. " +
-      "Extracts keys from running WeChat process memory (SQLCipher 4) and decrypts all .db files. " +
-      "Requires WeChat to be running.",
+    "解密微信数据库。从运行中的微信进程提取密钥并解密所有 .db 文件。需要微信正在运行。",
     {
       out_dir: z
         .string()
         .optional()
-        .describe("Output directory for decrypted files. Defaults to 'decrypted'."),
+        .describe("解密文件输出目录，默认 'data'"),
     },
     async (args) => handleToolCall("decrypt_database", args)
   );
 
   server.tool(
     "extract_db_key",
-    "Extract WeChat database encryption keys from the running WeChat process memory (SQLCipher 4). " +
-      "Scans process memory for x'<key><salt>' patterns and validates via HMAC-SHA512. " +
-      "Requires WeChat to be running.",
+    "从运行中的微信进程内存中提取数据库加密密钥。需要微信正在运行。",
     {},
     async (args) => handleToolCall("extract_db_key", args)
   );
 
   server.tool(
     "list_sessions",
-    "List all WeChat chat sessions (conversations). Returns session list with username, nickname, remark, etc.",
+    "列出所有聊天会话，返回用户名、昵称、备注等信息。",
     {
       keyword: z
         .string()
         .optional()
-        .describe("Filter sessions by keyword"),
+        .describe("按关键词过滤会话"),
       limit: z
         .number()
         .optional()
-        .describe("Max number of sessions (default 100)"),
-      offset: z.number().optional().describe("Offset for pagination"),
+        .describe("最大返回数量（默认 100）"),
+      offset: z.number().optional().describe("分页偏移量"),
     },
     async (args) => handleToolCall("list_sessions", args)
   );
 
   server.tool(
     "get_messages",
-    "Get chat messages from a specific conversation. Provide the talker's username (wxid) to retrieve messages.",
+    "获取指定会话的聊天消息。支持关键词过滤和分页。",
     {
       talker_id: z
         .string()
-        .describe("The talker's username/wxid"),
-      keyword: z.string().optional().describe("Filter messages by keyword"),
-      limit: z.number().optional().describe("Max messages (default 50)"),
-      offset: z.number().optional().describe("Offset for pagination"),
+        .describe("对方的用户名/wxid"),
+      keyword: z.string().optional().describe("按关键词过滤消息"),
+      limit: z.number().optional().describe("最大返回数量（默认 50）"),
+      offset: z.number().optional().describe("分页偏移量"),
       reverse: z
         .boolean()
         .optional()
-        .describe("Return newest first if true"),
+        .describe("是否按时间倒序（默认 true）"),
+      start_time: z.number().optional().describe("开始时间（Unix 时间戳）"),
+      end_time: z.number().optional().describe("结束时间（Unix 时间戳）"),
     },
     async (args) => handleToolCall("get_messages", args)
   );
 
   server.tool(
     "search_messages",
-    "Search messages across ALL conversations globally by keyword.",
+    "在所有会话中全局搜索消息。",
     {
-      keyword: z.string().describe("Search keyword"),
-      limit: z.number().optional().describe("Max results (default 50)"),
-      offset: z.number().optional().describe("Offset for pagination"),
+      keyword: z.string().describe("搜索关键词"),
+      limit: z.number().optional().describe("最大返回数量（默认 50）"),
+      offset: z.number().optional().describe("分页偏移量"),
     },
     async (args) => handleToolCall("search_messages", args)
   );
 
   server.tool(
     "get_contacts",
-    "Get WeChat contacts list. Returns contact info including username, nickname, remark, alias.",
+    "获取微信联系人列表，包括用户名、昵称、备注、别名等信息。",
     {
-      keyword: z.string().optional().describe("Filter contacts by keyword"),
-      limit: z.number().optional().describe("Max contacts (default 200)"),
-      offset: z.number().optional().describe("Offset for pagination"),
+      keyword: z.string().optional().describe("按关键词过滤联系人"),
+      limit: z.number().optional().describe("最大返回数量（默认 200）"),
+      offset: z.number().optional().describe("分页偏移量"),
     },
     async (args) => handleToolCall("get_contacts", args)
   );
 
   server.tool(
     "get_stats",
-    "Get global chat statistics including total messages, contacts, sessions, message type distribution, top contacts, hourly and daily activity.",
+    "获取全局聊天统计，包括总消息数、会话数、消息类型分布、TOP20 活跃会话、24小时活跃度、30天趋势。",
     {},
     async (args) => handleToolCall("get_stats", args)
   );
 
   server.tool(
     "get_chat_stats",
-    "Get per-session chat statistics for a specific conversation. Includes message counts, type distribution, hourly/daily activity, top words, sender ranking (for group chats), reply time analysis.",
+    "获取单个会话的详细统计，包括消息数、类型分布、活跃度、高频词、群成员排行、回复速度分析。",
     {
       talker: z
         .string()
-        .describe("The talker's username/wxid (e.g. 'wxid_xxx' or 'xxx@chatroom')"),
+        .describe("对方的用户名/wxid（如 'wxid_xxx' 或 'xxx@chatroom'）"),
     },
     async (args) => handleToolCall("get_chat_stats", args)
   );
 
   server.tool(
     "get_chatroom_members",
-    "Get member list of a WeChat group chat (chatroom). Returns member nicknames and wxids.",
+    "获取微信群聊成员列表，返回成员的 wxid 和昵称。",
     {
       chatroom: z
         .string()
-        .describe("The chatroom username (e.g. xxx@chatroom)"),
+        .describe("群聊用户名（如 xxx@chatroom）"),
     },
     async (args) => handleToolCall("get_chatroom_members", args)
   );
 
   server.tool(
     "export_chat",
-    "Export chat messages from a specific conversation to JSON or TXT format.",
+    "导出指定会话的聊天记录，支持 JSON 或 TXT 格式。",
     {
       talker: z
         .string()
-        .describe("The talker's username/wxid"),
+        .describe("对方的用户名/wxid"),
       format: z
         .enum(["json", "txt"])
         .optional()
-        .describe("Export format: json or txt (default json)"),
+        .describe("导出格式：json 或 txt（默认 json）"),
     },
     async (args) => handleToolCall("export_chat", args)
   );
@@ -225,6 +205,7 @@ async function startWebMode() {
         closeAll();
         clearShardCache();
         const cfg = getConfig();
+        if (!cfg.wechatDbSrcPath) return;
         const absOutDir = path.resolve(cfg.dataDir);
         if (!fs.existsSync(absOutDir)) fs.mkdirSync(absOutDir, { recursive: true });
         await runDecrypt(cfg.wechatDbSrcPath, absOutDir);

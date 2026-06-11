@@ -192,13 +192,32 @@ def cross_verify_keys(db_files, salt_to_dbs, key_map):
                 break
 
 
+def parse_args():
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument("--args", type=str, default=None)
+    p.add_argument("positional", nargs="?", default=None)
+    return p.parse_args()
+
+
 def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_dir = os.path.dirname(script_dir)
 
-    db_dir = os.path.join("D:", os.sep, "weixinDoc", "xwechat_files", "wxid_oofdngwmbpok21_1562", "db_storage")
-    if len(sys.argv) > 1:
-        db_dir = sys.argv[1]
+    db_dir = os.environ.get("WECHAT_DB_SRC_PATH", "")
+    parsed = parse_args()
+    if parsed.args:
+        try:
+            a = json.loads(parsed.args)
+            db_dir = a.get("db_dir") or a.get("wechat_path") or db_dir
+        except (json.JSONDecodeError, AttributeError):
+            pass
+    elif parsed.positional:
+        db_dir = parsed.positional
+
+    if not db_dir:
+        print("[ERROR] 未指定数据库目录，请设置 WECHAT_DB_SRC_PATH 环境变量或通过 --args 传入", file=sys.stderr)
+        sys.exit(1)
 
     out_file = os.path.join(script_dir, "all_keys.json")
 

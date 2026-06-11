@@ -1,1 +1,5 @@
 pycryptodome
+pillow-heif
+Pillow
+av
+psutil

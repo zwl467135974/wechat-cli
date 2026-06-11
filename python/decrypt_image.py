@@ -133,10 +133,13 @@ def find_v2_key():
     import ctypes
     import psutil
 
-    attach_base = os.environ.get(
-        'WECHAT_ATTACH_DIR',
-        r'D:\weixinDoc\xwechat_files\wxid_oofdngwmbpok21_1562\msg\attach'
-    )
+    attach_base = os.environ.get('WECHAT_ATTACH_DIR', '')
+    if not attach_base:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        for _ in range(3):
+            script_dir = os.path.dirname(script_dir)
+        print("Error: WECHAT_ATTACH_DIR not set", file=sys.stderr)
+        return None, 'WECHAT_ATTACH_DIR environment variable not set'
 
     xor_key = get_xor_key(attach_base)
     if xor_key is None:
