@@ -256,7 +256,7 @@ function renderMessageContent(msg) {
     const fileLink = isFile ? `<a href="${API}/api/file?path=${encodeURIComponent(msg.mediaPath)}" target="_blank" class="file-link">[文件] ${escapeHtml(title)}</a>` : '';
     const link = isFile ? fileLink : (msg.appUrl && msg.appType !== 57 ? `<a class="app-link" href="${escapeHtml(msg.appUrl)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : `<span>${escapeHtml(title)}</span>`);
     const thumb = msg.appThumbUrl ? `<img class="app-thumb" src="${msg.appThumbUrl}" loading="lazy" onerror="this.remove()">` : '';
-    const refHtml = isReply ? `<div class="refer-block" onclick="scrollToMsg(${msg.referSeq || 0})">▎${escapeHtml(msg.referSender || '')}: ${escapeHtml((msg.referContent || '').substring(0, 100))}</div>` : '';
+    const refHtml = isReply ? `<div class="refer-block" onclick="scrollToRefMsg(this)" data-ref-content="${escapeHtml(msg.referContent || '')}" data-ref-time="${escapeHtml(msg.time)}">▎${escapeHtml(msg.referSender || '')}: ${escapeHtml((msg.referContent || '').substring(0, 100))}</div>` : '';
     const mergedHtml = isMerged ? `<div class="merged-msgs collapsed" data-seq="${msg.seq}">${msg.subMessages.map(s => `<div class="merged-item">${escapeHtml(s)}</div>`).join('')}<div style="display:flex;gap:4px;margin-top:4px"><button class="merged-toggle" onclick="toggleMerged(this)">${msg.subMessages.length > 10 ? '展开全部 ' + msg.subMessages.length + ' 条' : '展开'}</button><button class="merged-toggle" onclick="showMergedPopup(this)">弹窗查看</button></div></div>` : '';
     const descHtml = !isMerged && desc && !isReply && !isFile ? `<div class="app-desc">${escapeHtml(desc.substring(0, 200))}${desc.length > 200 ? '...' : ''}</div>` : '';
     bubble = `<div class="message-bubble app-bubble">${thumb}${refHtml}<div class="app-title">${link}</div>${descHtml}${mergedHtml}</div>`;
@@ -918,17 +918,32 @@ document.addEventListener('click', function(e) {
   }
 });
 
-window.scrollToMsg = function(seq) {
-  if (!seq) return;
-  const el = document.getElementById('msg-' + seq);
-  if (el) {
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    el.classList.remove('highlight');
-    void el.offsetWidth;
-    el.classList.add('highlight');
-    return;
+window.scrollToRefMsg = function(el) {
+  const refContent = el.dataset.refContent || '';
+  if (!refContent) { showToast('无法定位引用消息'); return; }
+  const refSnippet = refContent.substring(0, 30).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const rows = document.querySelectorAll('.message-row');
+  let bestMatch = null;
+  let bestIdx = -1;
+  const currentRow = el.closest('.message-row');
+  rows.forEach((row, idx) => {
+    if (row === currentRow) return;
+    const raw = row.getAttribute('data-raw-content') || '';
+    if (raw.includes(refContent) || raw.includes(refSnippet)) {
+      if (!bestMatch || (currentRow && Math.abs(idx - [...rows].indexOf(currentRow)) < Math.abs(bestIdx - [...rows].indexOf(currentRow)))) {
+        bestMatch = row;
+        bestIdx = idx;
+      }
+    }
+  });
+  if (bestMatch) {
+    bestMatch.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    bestMatch.classList.remove('highlight');
+    void bestMatch.offsetWidth;
+    bestMatch.classList.add('highlight');
+  } else {
+    showToast('被引用消息不在当前视图中');
   }
-  showToast('被引用消息不在当前视图中');
 };
 
 window.showContactDetail = async function(username) {
