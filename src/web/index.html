@@ -16,6 +16,7 @@
       <button class="nav-btn" data-page="contacts">通讯录</button>
       <button class="nav-btn" data-page="search">搜索</button>
       <button class="nav-btn" data-page="dashboard">统计</button>
+      <button class="nav-btn" data-page="report">年度报告</button>
       <button class="nav-btn" data-page="setup">设置</button>
     </nav>
     <div class="header-actions">
@@ -46,6 +47,7 @@ let state = {
   searchOffset: 0,
   loading: false,
   selfWxid: '',
+  aiEnabled: false,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -248,6 +250,8 @@ async function checkStatus() {
     const refreshText = refreshInfo.lastRefresh ? ` | 更新: ${new Date(refreshInfo.lastRefresh).toLocaleTimeString('zh-CN')}` : '';
     $('#statusText').textContent = `${s.dbCount} 个数据库${refreshText}`;
     if (s.selfWxid) state.selfWxid = s.selfWxid;
+    state.aiEnabled = !!s.aiEnabled;
+    state.setupConfig = s;
     if (s.hasData && s.dbCount === 0) {
       $('#statusText').textContent = '暂无数据 - 请先设置';
       $('#statusDot').className = 'status-dot disconnected';
@@ -1177,8 +1181,136 @@ async function loadAndRenderStats() {
   }, 400);
 }
 
+async function renderYearReport() {
+  const year = new Date().getFullYear();
+  mainContent().innerHTML = `<div class="page-container"><div style="text-align:center;padding:60px 20px"><div class="loading-spinner" style="margin:0 auto 16px"></div><div style="color:var(--text-secondary)">正在生成 ${year} 年度报告...</div></div></div>`;
+  try {
+    const r = await api(`/api/year-report?year=${year}`);
+    renderYearReportContent(r);
+  } catch (e) {
+    mainContent().innerHTML = `<div class="page-container"><div class="empty-state"><div class="empty-state-icon">📊</div><div>加载失败: ${escapeHtml(e.message)}</div></div></div>`;
+  }
+}
+
+function renderYearReportContent(r) {
+  const monthNames = ['一月','二月','三月','四月','五月','六月','七月','八月','九月','十月','十一月','十二月'];
+  const maxMonth = Math.max(...r.monthlyActivity.map(m => m.count), 1);
+  const monthBars = r.monthlyActivity.map(m => {
+    const pct = Math.round(m.count / maxMonth * 100);
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span style="min-width:40px;font-size:12px;color:var(--text-muted);text-align:right">${monthNames[m.month-1]}</span>
+      <div style="flex:1;height:20px;background:var(--bg-tertiary);border-radius:4px;overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:linear-gradient(90deg,#3b82f6,#8b5cf6);border-radius:4px;transition:width 1s"></div>
+      </div>
+      <span style="min-width:50px;font-size:12px;color:var(--text-secondary)">${m.count.toLocaleString()}</span>
+    </div>`;
+  }).join('');
+
+  const maxHour = Math.max(...r.hourlyActivity, 1);
+  const hourBars = r.hourlyActivity.map((c, h) => {
+    const pct = Math.round(c / maxHour * 100);
+    const isPeak = h === r.peakHour.hour;
+    return `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;flex:1">
+      <div style="width:100%;max-width:24px;height:60px;background:var(--bg-tertiary);border-radius:3px;display:flex;align-items:flex-end;overflow:hidden">
+        <div style="width:100%;height:${Math.max(pct, 3)}%;background:${isPeak ? '#f59e0b' : 'var(--accent)'};border-radius:3px;transition:height 0.8s"></div>
+      </div>
+      <span style="font-size:9px;color:${isPeak ? '#f59e0b' : 'var(--text-muted)'}">${h}</span>
+    </div>`;
+  }).join('');
+
+  const typeChart = r.typeDistribution.slice(0, 5).map(t => {
+    const pct = r.totalMessages > 0 ? Math.round(t.count / r.totalMessages * 100) : 0;
+    const colors = { '文本':'#3b82f6','图片':'#22c55e','语音':'#f59e0b','视频':'#ef4444','表情':'#a855f7','应用':'#06b6d4','系统':'#64748b' };
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <div style="min-width:50px;font-size:13px;color:var(--text-primary)">${escapeHtml(t.label)}</div>
+      <div style="flex:1;height:16px;background:var(--bg-tertiary);border-radius:8px;overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:${colors[t.label] || 'var(--accent)'};border-radius:8px"></div>
+      </div>
+      <span style="min-width:60px;font-size:12px;color:var(--text-secondary);text-align:right">${t.count.toLocaleString()} (${pct}%)</span>
+    </div>`;
+  }).join('');
+
+  const topList = r.topContacts.map((c, i) => {
+    const medals = ['🥇','🥈','🥉'];
+    const medal = medals[i] || `<span style="color:var(--text-muted);font-size:13px">${i+1}</span>`;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;${i < r.topContacts.length - 1 ? 'border-bottom:1px solid var(--border)' : ''}">
+      <span>${medal}</span>
+      <span style="font-size:14px;color:var(--text-primary);flex:1">${escapeHtml(c.nickname || c.username)}</span>
+      <span style="font-size:13px;color:var(--accent);font-weight:600">${c.count.toLocaleString()} 条</span>
+    </div>`;
+  }).join('');
+
+  mainContent().innerHTML = `
+    <div class="page-container">
+      <div style="max-width:700px;margin:0 auto">
+        <div style="text-align:center;margin-bottom:32px">
+          <h1 style="font-size:28px;font-weight:700;color:var(--text-primary);margin:0">${r.year} 年度聊天报告</h1>
+          <p style="color:var(--text-secondary);margin-top:8px">回顾你的 ${r.year}</p>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px">
+          <div class="stats-card" style="text-align:center;padding:20px">
+            <div style="font-size:32px;font-weight:700;color:var(--accent)">${r.totalMessages.toLocaleString()}</div>
+            <div style="font-size:12px;color:var(--text-secondary);margin-top:4px">全年消息</div>
+          </div>
+          <div class="stats-card" style="text-align:center;padding:20px">
+            <div style="font-size:32px;font-weight:700;color:#22c55e">${r.avgPerDay.toLocaleString()}</div>
+            <div style="font-size:12px;color:var(--text-secondary);margin-top:4px">日均消息</div>
+          </div>
+          <div class="stats-card" style="text-align:center;padding:20px">
+            <div style="font-size:32px;font-weight:700;color:#f59e0b">${r.yearDays}</div>
+            <div style="font-size:12px;color:var(--text-secondary);margin-top:4px">活跃天数</div>
+          </div>
+        </div>
+
+        <div class="stats-card" style="margin-bottom:16px">
+          <div class="stats-section-title">📅 月度消息量</div>
+          ${monthBars}
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+          <div class="stats-card">
+            <div class="stats-section-title">🕐 24小时活跃分布</div>
+            <div style="display:flex;gap:2px;align-items:flex-end">${hourBars}</div>
+            <div style="text-align:center;margin-top:8px;font-size:12px;color:var(--text-secondary)">最活跃: ${r.peakHour.hour}时 (${r.peakHour.count.toLocaleString()}条)</div>
+          </div>
+          <div class="stats-card">
+            <div class="stats-section-title">🌙 夜猫子指数</div>
+            <div style="text-align:center;padding:12px 0">
+              <div style="font-size:48px;font-weight:700;color:#8b5cf6">${r.lateNightPct}%</div>
+              <div style="font-size:13px;color:var(--text-secondary);margin-top:4px">凌晨0-5点发送了 ${r.lateNightCount.toLocaleString()} 条消息</div>
+            </div>
+            ${r.peakDay ? `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:13px;color:var(--text-secondary)">最高峰: ${r.peakDay.date} (${r.peakDay.count.toLocaleString()}条)</div>` : ''}
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+          <div class="stats-card">
+            <div class="stats-section-title">🔥 连续活跃</div>
+            <div style="text-align:center;padding:12px 0">
+              <div style="font-size:48px;font-weight:700;color:#ef4444">${r.longestStreak}</div>
+              <div style="font-size:13px;color:var(--text-secondary);margin-top:4px">天最长连续聊天</div>
+              ${r.longestStreakStart ? `<div style="font-size:12px;color:var(--text-muted);margin-top:4px">从 ${r.longestStreakStart} 开始</div>` : ''}
+            </div>
+          </div>
+          <div class="stats-card">
+            <div class="stats-section-title">📊 消息类型分布</div>
+            ${typeChart}
+          </div>
+        </div>
+
+        <div class="stats-card" style="margin-bottom:24px">
+          <div class="stats-section-title">🏆 最亲密的人</div>
+          ${topList || '<div style="color:var(--text-muted);text-align:center;padding:20px">暂无数据</div>'}
+        </div>
+
+      </div>
+    </div>`;
+}
+
 function renderSetupPage() {
   const selfWxid = state.selfWxid || '';
+  const config = state.setupConfig || {};
   mainContent().innerHTML = `
     <div class="page-container">
       <div class="setup-wizard">
@@ -1228,12 +1360,43 @@ function renderSetupPage() {
         </div>
 
         <div class="setup-step">
+          <h3><span class="step-number">2.9</span> AI 助手配置（可选）</h3>
+          <p style="color:var(--text-secondary);margin-bottom:12px">接入 OpenAI 兼容 API 后，可启用对话摘要等 AI 功能。不配置不影响其他功能使用。</p>
+          <div class="input-group">
+            <label>启用 AI 功能</label>
+            <select class="input-field" id="setupAiEnabled">
+              <option value="false">关闭</option>
+              <option value="true">开启</option>
+            </select>
+          </div>
+          <div class="input-group">
+            <label>API 地址</label>
+            <input class="input-field" id="setupAiUrl" placeholder="https://api.openai.com/v1">
+          </div>
+          <div class="input-group">
+            <label>API Key</label>
+            <input class="input-field" id="setupAiKey" type="password" placeholder="sk-...">
+          </div>
+          <div class="input-group">
+            <label>模型名称</label>
+            <input class="input-field" id="setupAiModel" placeholder="gpt-4o-mini">
+          </div>
+          <button class="btn btn-primary" onclick="doSaveAiConfig(this)">保存 AI 配置</button>
+          <div id="aiConfigResult" class="log-output" style="margin-top:12px;display:none"></div>
+        </div>
+
+        <div class="setup-step">
           <h3><span class="step-number">3</span> 开始浏览</h3>
           <p style="color:var(--text-secondary);margin-bottom:12px">解密完成后，切换到聊天标签页即可浏览聊天记录。</p>
           <button class="btn btn-secondary" onclick="navigateTo('chat')">进入聊天</button>
         </div>
       </div>
     </div>`;
+
+  if (state.setupConfig) {
+    const sel = $('#setupAiEnabled');
+    if (sel) sel.value = state.aiEnabled ? 'true' : 'false';
+  }
 }
 
 window.doExtractKey = async function(btn) {
@@ -1317,6 +1480,34 @@ window.doSaveSelfWxid = async function(btn) {
     el.style.display = 'block';
     el.textContent = '保存成功！刷新聊天页面即可看到自己的头像。';
     showToast('保存成功');
+  } catch (e) {
+    showToast('保存失败: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
+  }
+};
+
+window.doSaveAiConfig = async function(btn) {
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '保存中...';
+  try {
+    await api('/api/save-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        aiEnabled: $('#setupAiEnabled')?.value === 'true',
+        aiApiUrl: $('#setupAiUrl')?.value?.trim() || '',
+        aiApiKey: $('#setupAiKey')?.value?.trim() || '',
+        aiModel: $('#setupAiModel')?.value?.trim() || '',
+      }),
+    });
+    state.aiEnabled = $('#setupAiEnabled')?.value === 'true';
+    const el = $('#aiConfigResult');
+    el.style.display = 'block';
+    el.textContent = state.aiEnabled ? 'AI 配置已保存并启用！' : 'AI 功能已关闭。';
+    showToast('AI 配置保存成功');
   } catch (e) {
     showToast('保存失败: ' + e.message, 'error');
   } finally {
@@ -1462,6 +1653,9 @@ function renderPage() {
       break;
     case 'dashboard':
       renderDashboard();
+      break;
+    case 'report':
+      renderYearReport();
       break;
     case 'setup':
       renderSetupPage();

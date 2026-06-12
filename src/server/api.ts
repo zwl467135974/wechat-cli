@@ -22,6 +22,7 @@ import {
   convertWxgfToJpg,
 } from "./image.js";
 import { doRefresh } from "./refresh.js";
+import { callAi, isAiEnabled } from "./ai.js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -87,6 +88,10 @@ app.get("/api/status", (c) => {
     wechatDbSrcPath: config.wechatDbSrcPath || "not configured",
     hasImageKey: !!config.imageKey,
     selfWxid: config.selfWxid || "",
+    aiEnabled: isAiEnabled(),
+    aiApiUrl: config.aiApiUrl || "",
+    aiModel: config.aiModel || "",
+    hasAiKey: !!config.aiApiKey,
   });
 });
 
@@ -99,6 +104,10 @@ app.post("/api/save-config", async (c) => {
   if (body.imageKey) mapping.IMAGE_KEY = body.imageKey;
   if (body.xorKey) mapping.XOR_KEY = body.xorKey;
   if (body.selfWxid) mapping.SELF_WXID = body.selfWxid;
+  if (body.aiEnabled !== undefined) mapping.AI_ENABLED = body.aiEnabled ? "true" : "false";
+  if (body.aiApiUrl !== undefined) mapping.AI_API_URL = body.aiApiUrl;
+  if (body.aiApiKey !== undefined) mapping.AI_API_KEY = body.aiApiKey;
+  if (body.aiModel !== undefined) mapping.AI_MODEL = body.aiModel;
   saveEnvFile(mapping);
   const config = getConfig();
   if (body.wechatDbSrcPath) config.wechatDbSrcPath = body.wechatDbSrcPath;
@@ -107,6 +116,10 @@ app.post("/api/save-config", async (c) => {
   if (body.imageKey) config.imageKey = body.imageKey;
   if (body.xorKey) config.xorKey = body.xorKey;
   if (body.selfWxid) config.selfWxid = body.selfWxid;
+  if (body.aiEnabled !== undefined) config.aiEnabled = body.aiEnabled;
+  if (body.aiApiUrl !== undefined) config.aiApiUrl = body.aiApiUrl;
+  if (body.aiApiKey !== undefined) config.aiApiKey = body.aiApiKey;
+  if (body.aiModel !== undefined) config.aiModel = body.aiModel;
   return c.json({ success: true });
 });
 
@@ -519,6 +532,36 @@ app.post("/api/scan-image-key", async (c) => {
   return c.json({ success: false, error: "Key not found. Try viewing some images in WeChat first." });
 });
 
+app.post("/api/ai/chat", async (c) => {
+  if (!isAiEnabled()) {
+    return c.json({ error: "AI 功能未启用" }, 400);
+  }
+  try {
+    const { messages } = await c.req.json();
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return c.json({ error: "messages 不能为空" }, 400);
+    }
+    const result = await callAi(messages);
+    return c.json({ content: result });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return c.json({ error: msg }, 500);
+  }
+});
+
+app.get("/api/year-report", async (c) => {
+  try {
+    const config = getConfig();
+    const year = Number(c.req.query("year")) || new Date().getFullYear();
+    const stats = await getGlobalStats(config.dataDir);
+    const report = buildYearReport(stats, year);
+    return c.json(report);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return c.json({ error: msg }, 500);
+  }
+});
+
 const distRelativeWebDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../web"
@@ -563,5 +606,58 @@ app.get("*", async (c) => {
     headers: { "Content-Type": "text/html" },
   });
 });
+
+function buildYearReport(
+  stats: import("../db/stats.js").GlobalStats,
+  year: number
+) {
+  const daily = stats.dailyActivity.filter(d => d.date.startsWith(String(year)));
+  const totalYear = daily.reduce((s, d) => s + d.count, 0);
+  const yearDays = daily.length;
+  const avgPerDay = yearDays > 0 ? Math.round(totalYear / yearDays) : 0;
+
+  const maxDay = daily.reduce((best, d) => d.count > (best?.count || 0) ? d : best, daily[0]);
+  const peakHour = stats.hourlyActivity.reduce((best, cnt, h) => cnt > (best.cnt || 0) ? { h, cnt } : best, { h: 0, cnt: 0 });
+
+  const lateNight = stats.hourlyActivity.slice(0, 5).reduce((s, c) => s + c, 0);
+  const lateNightPct = totalYear > 0 ? Math.round(lateNight / totalYear * 100) : 0;
+
+  let maxStreak = 0, curStreak = 0, streakStart = "";
+  let bestStreak = 0, bestStreakStart = "";
+  const daySet = new Set(daily.map(d => d.date));
+  const sorted = daily.map(d => d.date).sort();
+  for (const d of sorted) {
+    if (daySet.has(d)) {
+      curStreak++;
+      if (curStreak === 1) streakStart = d;
+      if (curStreak > bestStreak) { bestStreak = curStreak; bestStreakStart = streakStart; }
+    } else {
+      curStreak = 0;
+    }
+  }
+
+  const top5 = stats.topContacts.slice(0, 5);
+  const typeDist = stats.typeDistribution.filter(t => t.count > 0);
+
+  return {
+    year,
+    totalMessages: totalYear,
+    yearDays,
+    avgPerDay,
+    peakDay: maxDay ? { date: maxDay.date, count: maxDay.count } : null,
+    peakHour: { hour: peakHour.h, count: peakHour.cnt },
+    lateNightCount: lateNight,
+    lateNightPct,
+    longestStreak: bestStreak,
+    longestStreakStart: bestStreakStart,
+    topContacts: top5,
+    typeDistribution: typeDist,
+    monthlyActivity: Array.from({ length: 12 }, (_, i) => {
+      const prefix = `${year}-${String(i + 1).padStart(2, "0")}`;
+      return { month: i + 1, count: daily.filter(d => d.date.startsWith(prefix)).reduce((s, d) => s + d.count, 0) };
+    }),
+    hourlyActivity: stats.hourlyActivity,
+  };
+}
 
 export { app };

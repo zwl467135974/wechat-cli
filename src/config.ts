@@ -11,6 +11,10 @@ export interface AppConfig {
   xorKey: string;
   pythonPath: string;
   selfWxid: string;
+  aiEnabled: boolean;
+  aiApiUrl: string;
+  aiApiKey: string;
+  aiModel: string;
 }
 
 const DEFAULT_CONFIG: Partial<AppConfig> = {
@@ -71,6 +75,10 @@ export function initConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     imageKey: envFile.IMAGE_KEY || "",
     xorKey: envFile.XOR_KEY || "",
     selfWxid: envFile.SELF_WXID || "",
+    aiEnabled: envFile.AI_ENABLED === "true",
+    aiApiUrl: envFile.AI_API_URL || "",
+    aiApiKey: envFile.AI_API_KEY || "",
+    aiModel: envFile.AI_MODEL || "",
     ...envOverrides,
   } as AppConfig;
 
