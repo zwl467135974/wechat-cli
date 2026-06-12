@@ -10,6 +10,7 @@
 - **多媒体支持** — 图片(缩略图+原图)、视频流播放、表情三级 fallback、语音转文字
 - **数据分析** — 全局统计仪表板 + 单会话统计面板(热力图/词云/成员排行/聊天画像)
 - **导出** — 支持 JSON / TXT / HTML 格式导出聊天记录
+- **防撤回** — 自动捕捉撤回消息，持久化存储，支持查看撤回原文
 - **双主题** — 深色/浅色主题切换，响应式移动端适配
 
 ## 系统要求
@@ -53,14 +54,24 @@ npm run build
 
 ## API 接口
 
+所有 `/api/*` 接口支持可选认证，设置环境变量 `AUTH_TOKEN` 后，请求需携带：
+- HTTP Header: `Authorization: Bearer <token>`
+- 或 Query 参数: `?token=<token>`
+
+未设置 `AUTH_TOKEN` 则无需认证。
+
 | 接口 | 方法 | 说明 |
 |------|------|------|
-| `/api/status` | GET | 服务状态与上次刷新时间 |
+| `/api/health` | GET | 健康检查 |
+| `/api/status` | GET | 服务状态与数据库信息 |
+| `/api/last-refresh` | GET | 上次刷新时间 |
+| `/api/refresh` | POST | 手动刷新数据（重新解密数据库） |
 | `/api/extract-key` | POST | 提取数据库密钥 |
 | `/api/decrypt` | POST | 解密所有数据库 |
+| `/api/save-config` | POST | 保存配置 |
 | `/api/sessions` | GET | 会话列表（支持搜索） |
 | `/api/contacts` | GET | 联系人列表 |
-| `/api/messages` | GET | 指定会话的消息（支持分页、搜索） |
+| `/api/messages` | GET | 指定会话的消息（支持分页、搜索、时间范围） |
 | `/api/search` | GET | 全局搜索消息 |
 | `/api/stats` | GET | 全局统计数据（缓存 5 分钟） |
 | `/api/chat-stats` | GET | 单会话统计数据（含成员排行、热力图、词云） |
@@ -68,10 +79,28 @@ npm run build
 | `/api/image` | GET | 图片（缩略图/原图，自动解密 wxgf 格式） |
 | `/api/emoji` | GET | 表情图片 |
 | `/api/video` | GET | 视频文件（Range 流式） |
+| `/api/file` | GET | 通用文件下载 |
 | `/api/export` | GET | 导出聊天记录（json/txt/html） |
-| `/api/save-config` | POST | 保存配置 |
 | `/api/image-key` | GET | 图片密钥状态 |
 | `/api/scan-image-key` | POST | 扫描图片解密密钥 |
+
+## 环境变量
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `PORT` | `5200` | Web UI 端口 |
+| `DATA_DIR` | `decrypted` | 解密后数据库目录 |
+| `PYTHON_PATH` | `python` | Python 可执行文件路径 |
+| `AUTO_REFRESH_MS` | `60000` | 自动刷新间隔（毫秒），0 禁用 |
+| `AUTH_TOKEN` | (空) | API 认证 token，空则跳过认证 |
+| `WECHAT_DB_SRC_PATH` | - | 微信数据库源路径 |
+| `WECHAT_DB_KEY` | - | 数据库解密密钥 |
+| `WECHAT_PATH` | - | 微信安装路径 |
+| `WECHAT_DATA_PATH` | - | 微信数据目录 |
+| `IMAGE_KEY` | - | 图片解密密钥 |
+| `XOR_KEY` | - | 图片 XOR 密钥 |
+
+以上配置也可通过 Web UI 设置页保存到 `.env` 文件。
 
 ## MCP 工具
 
@@ -119,10 +148,17 @@ wechat-cli/
 │   │   ├── models.ts          # 类型定义
 │   │   ├── codec.ts           # Zstd 解码
 │   │   ├── query-contacts.ts  # 联系人 & 会话 & 群成员查询
-│   │   └── query-messages.ts  # 消息查询 & 搜索 & 统计
+│   │   ├── query-messages.ts  # 消息查询 & 搜索
+│   │   ├── query-search.ts    # 全局搜索
+│   │   ├── stats.ts           # 统计数据
+│   │   ├── message-parser.ts  # 消息解析 & 分词
+│   │   └── recall-store.ts    # 防撤回：内存缓冲 + 持久化
 │   ├── server/
 │   │   ├── api.ts             # Hono REST API
-│   │   └── image.ts           # 图片/视频解析 & wxgf 转换
+│   │   ├── image.ts           # 图片/视频解析 & wxgf 转换
+│   │   └── refresh.ts         # 数据刷新逻辑
+│   ├── python/
+│   │   └── runner.ts          # Python 调用封装
 │   ├── tools/
 │   │   └── handlers.ts        # MCP 工具处理
 │   └── web/
