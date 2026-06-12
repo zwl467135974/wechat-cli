@@ -14,6 +14,7 @@ import {
   md5,
 } from "./message-parser.js";
 import { saveMessages } from "./recall-store.js";
+import { loadContactMap } from "./query-contacts.js";
 
 let shardCache: Map<string, ReturnType<typeof buildShardIndex>> = new Map();
 
@@ -300,3 +301,53 @@ async function searchInTableAdvanced(
 }
 
 export { md5 };
+
+export async function getTimeline(
+  dataDir: string,
+  date: string,
+  limit = 200
+): Promise<(Message & { talkerName?: string })[]> {
+  const shards = await getShards(dataDir);
+  const startTs = Math.floor(new Date(date + "T00:00:00").getTime() / 1000);
+  const endTs = Math.floor(new Date(date + "T23:59:59").getTime() / 1000);
+  const all: (Message & { talkerName?: string })[] = [];
+
+  for (const shard of shards) {
+    const db = await getConnection(shard.filePath);
+    const tables = listMsgTables(db);
+    for (const table of tables) {
+      try {
+        const rows = db.exec(
+          `SELECT sort_seq, create_time, local_type, message_content, compress_content, status, source, packed_info_data
+           FROM "${table}"
+           WHERE create_time >= ? AND create_time <= ?
+           ORDER BY create_time ASC
+           LIMIT ?`,
+          [startTs, endTs, limit]
+        );
+        if (!rows.length || !rows[0].values.length) continue;
+        const talkers = [...shard.talkerMap.entries()];
+        const tableIdx = parseInt(table.replace(/^msg/i, "").replace("_", ""));
+        const entry = talkers.find(([, idx]) => idx === tableIdx);
+        const talker = entry ? entry[0] : table;
+        for (const row of rows[0].values) {
+          const msg = await parseMessageRow(row as unknown[], talker);
+          msg.talker = talker;
+          all.push(msg);
+        }
+      } catch { /* skip broken tables */ }
+    }
+  }
+
+  all.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+  const result = all.slice(0, limit);
+  await resolveSenderNames(dataDir, result);
+
+  const contactMap = await loadContactMap(dataDir, [...new Set(result.map(m => m.talker))]);
+  for (const msg of result) {
+    const c = contactMap.get(msg.talker);
+    if (c) msg.talkerName = c.nickname || c.remark || msg.talker;
+  }
+
+  return result;
+}

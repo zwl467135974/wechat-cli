@@ -27,6 +27,7 @@ import { addBookmark, removeBookmark, getBookmarks, isBookmarked } from "../db/b
 import { getWxFavorites, getFavoriteTypeLabel } from "../db/query-favorites.js";
 import { getEmojis } from "../db/query-emoji.js";
 import { getMediaFiles } from "../db/query-media.js";
+import type { EmojiItem } from "../db/query-emoji.js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -203,6 +204,16 @@ app.get("/api/contact-detail", async (c) => {
   } catch { /* ignore */ }
 
   return c.json({ ...contact, msgCount, firstMsg, lastMsg, sharedGroups });
+});
+
+app.get("/api/timeline", async (c) => {
+  const config = getConfig();
+  const date = c.req.query("date");
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return c.json({ error: "date required (YYYY-MM-DD)" }, 400);
+  const limit = Number(c.req.query("limit")) || 200;
+  const { getTimeline } = await import("../db/query-messages.js");
+  const messages = await getTimeline(config.dataDir, date, limit);
+  return c.json({ date, count: messages.length, messages });
 });
 
 app.get("/api/messages", async (c) => {
@@ -663,11 +674,11 @@ app.get("/api/year-report", async (c) => {
     const config = getConfig();
     const year = Number(c.req.query("year")) || new Date().getFullYear();
     const stats = await getGlobalStats(config.dataDir);
-    const report = buildYearReport(stats, year);
+    const emojis = await getEmojis(config.dataDir, 10, 0);
+    const report = buildYearReport(stats, year, emojis.items);
     return c.json(report);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return c.json({ error: msg }, 500);
+  } catch (e: unknown) {
+    return c.json({ error: (e as Error).message }, 500);
   }
 });
 
@@ -718,7 +729,8 @@ app.get("*", async (c) => {
 
 function buildYearReport(
   stats: import("../db/stats.js").GlobalStats,
-  year: number
+  year: number,
+  topEmojis: EmojiItem[]
 ) {
   const daily = stats.dailyActivity.filter(d => d.date.startsWith(String(year)));
   const totalYear = daily.reduce((s, d) => s + d.count, 0);
@@ -766,7 +778,127 @@ function buildYearReport(
       return { month: i + 1, count: daily.filter(d => d.date.startsWith(prefix)).reduce((s, d) => s + d.count, 0) };
     }),
     hourlyActivity: stats.hourlyActivity,
+    topEmojis: topEmojis.map(e => ({ url: e.url, md5: e.md5, source: e.source, count: e.count })),
+    emojiTotal: topEmojis.reduce((s, e) => s + e.count, 0) || 0,
   };
 }
+
+app.post("/api/ai/sentiment", async (c) => {
+  try {
+    const { talker } = await c.req.json<{ talker: string }>();
+    if (!talker) return c.json({ error: "talker required" }, 400);
+    const { isAiEnabled, callAi } = await import("../server/ai.js");
+    if (!isAiEnabled()) return c.json({ error: "AI 功能未配置" }, 400);
+
+    const config = getConfig();
+    const { getMessages } = await import("../db/query-messages.js");
+    const messages = await getMessages(config.dataDir, talker, { limit: 50, reverse: true });
+    if (!messages.length) return c.json({ error: "无消息数据" }, 404);
+
+    const textMessages = messages
+      .filter(m => m.content && !m.content.startsWith("["))
+      .slice(0, 30)
+      .map(m => `${m.isSelf ? '我' : m.sender}: ${m.content}`)
+      .join("\n");
+
+    const result = await callAi([
+      { role: "system", content: "你是聊天情感分析专家。分析以下聊天记录的整体情感倾向。返回JSON格式：{\"overall\":\"积极/消极/中性\",\"score\":0.8,\"summary\":\"简短中文描述\",\"keywords\":[\"关键词1\",\"关键词2\"]}。只返回JSON，不要其他内容。" },
+      { role: "user", content: textMessages }
+    ], { temperature: 0.3, maxTokens: 300 });
+
+    let parsed: Record<string, unknown> = {};
+    try {
+      const match = result.match(/\{[\s\S]*\}/);
+      if (match) parsed = JSON.parse(match[0]);
+    } catch { /* fallback */ }
+
+    return c.json(parsed);
+  } catch (e: unknown) {
+    return c.json({ error: (e as Error).message }, 500);
+  }
+});
+
+app.post("/api/ai/smart-search", async (c) => {
+  try {
+    const { query } = await c.req.json<{ query: string }>();
+    if (!query) return c.json({ error: "query required" }, 400);
+    const { isAiEnabled, callAi } = await import("../server/ai.js");
+    if (!isAiEnabled()) return c.json({ error: "AI 功能未配置" }, 400);
+
+    const aiResult = await callAi([
+      { role: "system", content: "你是微信聊天记录搜索助手。用户输入自然语言描述，你提取出搜索关键词。只返回一个JSON数组，包含2-5个关键词字符串，不要其他内容。示例：用户说\"上个月和小王讨论旅游的事情\"，你返回 [\"小王\",\"旅游\"]" },
+      { role: "user", content: query }
+    ], { temperature: 0.3, maxTokens: 200 });
+
+    let keywords: string[] = [];
+    try {
+      const match = aiResult.match(/\[[\s\S]*\]/);
+      if (match) keywords = JSON.parse(match[0]);
+    } catch { /* fallback */ }
+    if (!keywords.length) keywords = query.split(/\s+/).slice(0, 3);
+
+    const { searchMessages } = await import("../db/query-messages.js");
+    const config = getConfig();
+    const results = await searchMessages(config.dataDir, keywords.join(" "), 30, 0, {});
+    return c.json({ keywords, results });
+  } catch (e: unknown) {
+    return c.json({ error: (e as Error).message }, 500);
+  }
+});
+
+app.get("/api/interaction-graph", async (c) => {
+  const config = getConfig();
+  const chatroom = c.req.query("chatroom");
+  if (!chatroom) return c.json({ error: "chatroom required" }, 400);
+  const { getMessages } = await import("../db/query-messages.js");
+  const messages = await getMessages(config.dataDir, chatroom, { limit: 500, reverse: false });
+
+  const pairs: Record<string, number> = {};
+  const senderCounts: Record<string, number> = {};
+  const replyPairs: Record<string, number> = {};
+
+  for (const msg of messages) {
+    const sender = msg.sender;
+    if (!sender) continue;
+    senderCounts[sender] = (senderCounts[sender] || 0) + 1;
+    if (msg.referContent && msg.referSender && msg.referSender !== sender) {
+      const key = [sender, msg.referSender].sort().join("::");
+      replyPairs[key] = (replyPairs[key] || 0) + 1;
+    }
+  }
+
+  const activeSenders = Object.entries(senderCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 30)
+    .map(([s]) => s);
+
+  for (const msg of messages) {
+    const s1 = msg.sender;
+    if (!s1 || !activeSenders.includes(s1)) continue;
+    const time = new Date(msg.time).getTime();
+    for (const s2 of activeSenders) {
+      if (s2 <= s1) continue;
+      const key = [s1, s2].sort().join("::");
+      pairs[key] = (pairs[key] || 0) + 1;
+    }
+  }
+
+  const edges = Object.entries(pairs)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 50)
+    .map(([key, count]) => {
+      const [source, target] = key.split("::");
+      return { source, target, count, replies: replyPairs[key] || 0 };
+    });
+
+  const { loadContactMap } = await import("../db/query-contacts.js");
+  const contactMap = await loadContactMap(config.dataDir, activeSenders);
+  const nodes = activeSenders.map(s => {
+    const c = contactMap.get(s);
+    return { id: s, name: c?.nickname || c?.remark || s, messages: senderCounts[s] };
+  });
+
+  return c.json({ nodes, edges });
+});
 
 export { app };

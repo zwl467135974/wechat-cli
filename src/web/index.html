@@ -20,6 +20,7 @@
       <button class="nav-btn" data-page="bookmarks">收藏</button>
       <button class="nav-btn" data-page="emojis">表情</button>
       <button class="nav-btn" data-page="files">文件</button>
+      <button class="nav-btn" data-page="timeline">时间线</button>
       <button class="nav-btn" data-page="setup">设置</button>
     </nav>
     <div class="header-actions">
@@ -452,7 +453,8 @@ function renderChatPage() {
             <input type="date" id="dateTo" style="padding:4px 6px;font-size:12px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius)" value="${$('#dateTo')?.value || ''}" title="结束日期">
             <button class="btn btn-secondary btn-sm" onclick="searchInChat()">搜索</button>
             <button class="btn btn-secondary btn-sm" id="chatSearchClear" style="display:none" onclick="clearChatSearch()">清除</button>
-            ${state.aiEnabled ? `<button class="btn btn-primary btn-sm" onclick="aiSummarize(this)">AI 摘要</button>` : ''}
+            ${state.aiEnabled ? `<button class="btn btn-primary btn-sm" onclick="aiSummarize(this)">AI 摘要</button>
+            <button class="btn btn-secondary btn-sm" onclick="aiSentiment(this)">情感分析</button>` : ''}
           </div>` : ''}
           <div style="display:flex;flex:1;overflow:hidden">
             <div class="messages-container" id="messagesContainer" style="flex:1">${messagesHtml}</div>
@@ -498,6 +500,12 @@ window.loadOlder = async function() {
 };
 
 let memberPanelVisible = false;
+window.startPrivateChat = function(wxid) {
+  if (!state.sessions.find(s => s.talker === wxid)) {
+    state.sessions.unshift({ talker: wxid, talkerName: wxid, lastMsg: '', lastTime: Date.now(), unread: 0 });
+  }
+  selectSession(wxid);
+};
 window.toggleMemberPanel = async function() {
   const panel = $('#memberPanel');
   if (!panel) return;
@@ -526,7 +534,7 @@ function renderMemberPanel(panel, members) {
         const avatar = m.smallHeadUrl
           ? `<img class="member-avatar" src="${m.smallHeadUrl}" alt="" loading="lazy" onerror="this.outerHTML='<div class=\\'member-avatar-fallback\\'>${getInitial(name)}</div>'">`
           : `<div class="member-avatar-fallback">${getInitial(name)}</div>`;
-        return `<div class="member-item">${avatar}<span class="member-name">${escapeHtml(name)}</span></div>`;
+        return `<div class="member-item" style="cursor:pointer" onclick="startPrivateChat('${escapeHtml(m.wxid)}')" title="点击与 ${escapeHtml(name)} 私聊">${avatar}<span class="member-name">${escapeHtml(name)}</span></div>`;
       }).join('')}
     </div>`;
   panel.innerHTML = html;
@@ -1075,6 +1083,7 @@ function renderSearchPage() {
       <div class="toolbar">
         <input class="search-input" placeholder="搜索所有聊天记录..." id="globalSearch" value="${escapeHtml(state.searchKeyword || '')}">
         <button class="btn btn-primary" onclick="doSearch()">搜索</button>
+        ${state.aiEnabled ? '<button class="btn btn-secondary" onclick="doSmartSearch()">AI 搜索</button>' : ''}
       </div>
       <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
         <select id="searchType" style="padding:4px 8px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-primary);font-size:13px">
@@ -1111,6 +1120,7 @@ function renderSearchPage() {
           <span class="pagination-info">${state.searchOffset} - ${state.searchOffset + state.searchResults.length}</span>
           <button class="btn btn-secondary btn-sm" onclick="prevSearch()">上一页</button>
           <button class="btn btn-secondary btn-sm" onclick="nextSearch()">下一页</button>
+          <button class="btn btn-secondary btn-sm" onclick="exportSearchResults()" style="margin-left:auto">导出结果</button>
         </div>` : ''}
     </div>`;
 
@@ -1144,6 +1154,52 @@ async function doSearch(keyword, offset = 0) {
 }
 
 window.doSearch = doSearch;
+
+window.doSmartSearch = async function() {
+  const query = $('#globalSearch')?.value?.trim();
+  if (!query) { showToast('请输入搜索描述', 'error'); return; }
+  const el = $('#searchResults');
+  if (el) el.innerHTML = '<div class="loading-spinner" style="margin:40px auto"></div>';
+  try {
+    const data = await api('/api/ai/smart-search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query })
+    });
+    if (data.keywords?.length) {
+      state.searchKeyword = data.keywords.join(' ');
+      const searchInput = $('#globalSearch');
+      if (searchInput) searchInput.value = state.searchKeyword;
+    }
+    state.searchResults = data.results || [];
+    state.searchOffset = 0;
+    renderSearchPage();
+    showToast(`AI 提取关键词: ${(data.keywords || []).join(', ')}`);
+  } catch (e) {
+    showToast('AI 搜索失败: ' + e.message, 'error');
+  }
+};
+
+window.exportSearchResults = function() {
+  if (!state.searchResults.length) return;
+  const header = '时间\t发送者\t会话\t内容\n';
+  const rows = state.searchResults.map(r => {
+    const session = state.sessions.find(s => s.username === r.talker);
+    const talkerName = session ? (session.remark || session.nickname || r.talker) : r.talker;
+    const t = r.time || '';
+    const s = r.sender || '';
+    const content = (r.content || '').replace(/\t/g, ' ').replace(/\n/g, ' ');
+    return `${t}\t${s}\t${talkerName}\t${content}`;
+  }).join('\n');
+  const blob = new Blob(['\uFEFF' + header + rows], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `搜索结果_${state.searchKeyword || 'export'}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('导出成功');
+};
 window.nextSearch = () => doSearch(state.searchKeyword, state.searchOffset + 50);
 window.prevSearch = () => doSearch(state.searchKeyword, Math.max(0, state.searchOffset - 50));
 
@@ -1370,6 +1426,15 @@ async function loadAndRenderStats() {
         <button class="btn btn-primary btn-sm" onclick="loadKeywordTrend()">查看趋势</button>
       </div>
       <div id="keywordTrendChart"></div>
+    </div>
+
+    <div class="stats-card stats-animate" style="margin-bottom:24px">
+      <div class="stats-section-title">🕸️ 群聊互动关系图</div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <select class="input-field" id="graphChatroom" style="flex:1"></select>
+        <button class="btn btn-primary btn-sm" onclick="loadInteractionGraph()">生成关系图</button>
+      </div>
+      <div id="interactionGraph" style="text-align:center;color:var(--text-secondary);padding:20px">选择群聊后点击生成</div>
     </div>`;
 
 window.loadKeywordTrend = async function() {
@@ -1398,6 +1463,57 @@ window.loadKeywordTrend = async function() {
     container.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">"${escapeHtml(kw)}" 共出现 ${total} 次，跨越 ${data.length} 个月</div>${bars}`;
   } catch (e) {
     container.innerHTML = `<div style="color:var(--text-secondary);text-align:center;padding:20px">查询失败: ${escapeHtml(e.message)}</div>`;
+  }
+};
+
+  const chatrooms = state.sessions.filter(s => s.username.endsWith('@chatroom'));
+  const sel = document.getElementById('graphChatroom');
+  if (sel) {
+    sel.innerHTML = chatrooms.map(s => `<option value="${escapeHtml(s.username)}">${escapeHtml(s.remark || s.nickname || s.username)}</option>`).join('');
+    if (!chatrooms.length) sel.innerHTML = '<option>暂无群聊</option>';
+  }
+
+window.loadInteractionGraph = async function() {
+  const chatroom = document.getElementById('graphChatroom')?.value;
+  if (!chatroom || !chatroom.includes('@chatroom')) { showToast('请选择一个群聊', 'error'); return; }
+  const el = document.getElementById('interactionGraph');
+  el.innerHTML = '<div class="loading-spinner" style="margin:20px auto"></div>';
+  try {
+    const data = await api('/api/interaction-graph?chatroom=' + encodeURIComponent(chatroom));
+    if (!data.nodes.length) { el.innerHTML = '<div style="color:var(--text-secondary)">该群无消息数据</div>'; return; }
+    const width = Math.min(700, el.offsetWidth || 700);
+    const height = 500;
+    const cx = width / 2, cy = height / 2;
+    const maxMsg = Math.max(...data.nodes.map(n => n.messages), 1);
+    const positions = data.nodes.map((n, i) => {
+      const angle = (2 * Math.PI * i) / data.nodes.length - Math.PI / 2;
+      const r = Math.min(cx, cy) - 60;
+      return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle), ...n };
+    });
+    const maxEdge = Math.max(...data.edges.map(e => e.count), 1);
+    let svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="max-width:100%">`;
+    for (const e of data.edges) {
+      const s = positions.find(p => p.id === e.source);
+      const t = positions.find(p => p.id === e.target);
+      if (!s || !t) continue;
+      const opacity = Math.min(0.8, 0.1 + (e.count / maxEdge) * 0.7);
+      const sw = Math.max(0.5, (e.count / maxEdge) * 4);
+      svg += `<line x1="${s.x}" y1="${s.y}" x2="${t.x}" y2="${t.y}" stroke="var(--accent)" stroke-width="${sw}" opacity="${opacity.toFixed(2)}"/>`;
+    }
+    for (const p of positions) {
+      const r = 8 + (p.messages / maxMsg) * 16;
+      svg += `<circle cx="${p.x}" cy="${p.y}" r="${r}" fill="var(--accent)" opacity="0.7"/>`;
+      svg += `<text x="${p.x}" y="${p.y + r + 12}" text-anchor="middle" fill="var(--text-primary)" font-size="10">${escapeHtml(p.name.substring(0, 6))}</text>`;
+    }
+    svg += '</svg>';
+    const topEdges = data.edges.slice(0, 10).map(e => {
+      const sn = data.nodes.find(n => n.id === e.source)?.name || e.source;
+      const tn = data.nodes.find(n => n.id === e.target)?.name || e.target;
+      return `${sn} ↔ ${tn}: ${e.count}次${e.replies ? ` (${e.replies}次回复)` : ''}`;
+    }).join('<br>');
+    el.innerHTML = svg + `<div style="margin-top:12px;font-size:12px;color:var(--text-secondary);text-align:left">${topEdges ? 'TOP 互动关系：<br>' + topEdges : ''}</div>`;
+  } catch (e) {
+    el.innerHTML = `<div style="color:var(--danger)">加载失败: ${escapeHtml(e.message)}</div>`;
   }
 };
 
@@ -1539,11 +1655,106 @@ function renderYearReportContent(r) {
           ${topList || '<div style="color:var(--text-muted);text-align:center;padding:20px">暂无数据</div>'}
         </div>
 
+        ${r.topEmojis && r.topEmojis.length > 0 ? `<div class="stats-card" style="margin-bottom:16px">
+          <div class="stats-section-title">😂 表情包使用 Top 10</div>
+          <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">共使用 ${r.emojiTotal} 次表情</div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+            ${r.topEmojis.map((e, i) => {
+              const imgSrc = e.source === 'local' ? `/api/emoji?md5=${e.md5}` : e.url;
+              const fallback = e.source === 'local'
+                ? `onerror="this.outerHTML='<div style=\\'width:48px;height:48px;background:var(--bg-hover);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:20px\\'>${i+1}</div>'"`
+                : `onerror="this.src='/api/emoji?md5=${e.md5}'"`;
+              return `<div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+                <img src="${escapeHtml(imgSrc)}" ${fallback} loading="lazy" style="width:48px;height:48px;object-fit:contain;border-radius:8px;background:var(--bg-hover)">
+                <span style="font-size:11px;color:var(--text-secondary)">${e.count}次</span>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>` : ''}
+
       </div>
     </div>`;
 }
 
 let mediaTypeFilter = 'all';
+let mediaViewGrid = false;
+
+window.batchDownload = async function() {
+  const result = await api('/api/media?type=' + mediaTypeFilter + '&limit=100');
+  const files = result.items.filter(f => f.mediaPath);
+  if (!files.length) { showToast('无可下载文件', 'error'); return; }
+  showToast(`开始下载 ${files.length} 个文件...`);
+  let downloaded = 0;
+  for (const f of files) {
+    try {
+      const prefix = f.type === 'image' ? '/api/image?path=' : f.type === 'video' ? '/api/video?path=' : '/api/file?path=';
+      const url = API + prefix + encodeURIComponent(f.mediaPath);
+      const resp = await fetch(url);
+      if (!resp.ok) continue;
+      const blob = await resp.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = f.fileName || `file_${downloaded}`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      downloaded++;
+      if (downloaded % 5 === 0) await new Promise(r => setTimeout(r, 500));
+    } catch { /* skip */ }
+  }
+  showToast(`已下载 ${downloaded}/${files.length} 个文件`);
+};
+
+async function renderTimelinePage() {
+  const main = $('#mainContent');
+  const today = new Date().toISOString().slice(0, 10);
+  main.innerHTML = `<div class="page-container">
+    <h1 class="page-title">时间线</h1>
+    <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+      <input type="date" class="input-field" id="timelineDate" value="${today}" style="width:auto">
+      <button class="btn btn-primary" onclick="loadTimeline()">查看</button>
+    </div>
+    <div id="timelineContent"></div>
+  </div>`;
+}
+
+async function loadTimeline() {
+  const date = $('#timelineDate').value;
+  if (!date) return;
+  const el = $('#timelineContent');
+  el.innerHTML = '<div class="loading-spinner" style="margin:40px auto"></div>';
+  try {
+    const result = await api('/api/timeline?date=' + date);
+    if (!result.messages.length) {
+      el.innerHTML = '<div class="fav-empty"><div class="fav-empty-icon">📭</div>该日无消息记录</div>';
+      return;
+    }
+    let html = `<div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">${date} 共 ${result.count} 条消息，来自 ${new Set(result.messages.map(m=>m.talker)).size} 个会话</div>`;
+    let lastTalker = '';
+    for (const msg of result.messages) {
+      if (msg.talker !== lastTalker) {
+        if (lastTalker) html += '</div>';
+        lastTalker = msg.talker;
+        const name = msg.talkerName || msg.talker;
+        html += `<div style="margin-bottom:16px">
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg-secondary);border-radius:8px;cursor:pointer;margin-bottom:8px" onclick="state.page='chat';updateNav();selectSession('${escapeHtml(msg.talker)}')">
+            <img src="${API}/api/avatar?wxid=${encodeURIComponent(msg.talker)}" style="width:24px;height:24px;border-radius:50%" onerror="this.style.display='none'">
+            <span style="font-weight:600;font-size:14px">${escapeHtml(name)}</span>
+          </div>`;
+      }
+      const time = new Date(msg.time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+      const isSelf = msg.isSelf;
+      html += `<div style="display:flex;gap:8px;padding:4px 12px;${isSelf ? 'flex-direction:row-reverse' : ''}">
+        <span style="font-size:11px;color:var(--text-muted);white-space:nowrap;min-width:40px">${time}</span>
+        <div style="max-width:70%;padding:6px 10px;border-radius:8px;background:${isSelf ? 'var(--accent-primary)' : 'var(--bg-secondary)'};color:${isSelf ? 'white' : 'var(--text-primary)'};font-size:13px;word-break:break-word">${escapeHtml(msg.content).substring(0, 200)}</div>
+      </div>`;
+    }
+    html += '</div>';
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = `<div class="fav-empty">加载失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+window.loadTimeline = loadTimeline;
 
 async function renderFilesPage() {
   const main = $('#mainContent');
@@ -1560,7 +1771,9 @@ async function renderFilesPage() {
   ];
   $('#mediaFilter').innerHTML = filters.map(f =>
     `<button class="fav-filter-btn ${mediaTypeFilter === f.value ? 'active' : ''}" onclick="mediaTypeFilter='${f.value}';renderFilesPage()">${f.label}</button>`
-  ).join('');
+  ).join('') + (mediaTypeFilter === 'image' || mediaTypeFilter === 'all'
+    ? `<button class="fav-filter-btn ${mediaViewGrid ? 'active' : ''}" onclick="mediaViewGrid=${!mediaViewGrid};renderFilesPage()" style="margin-left:4px">${mediaViewGrid ? '列表' : '九宫格'}</button>`
+    : '') + `<button class="fav-filter-btn" onclick="batchDownload()" style="margin-left:auto">批量下载</button>`;
 
   try {
     const result = await api(`/api/media?type=${mediaTypeFilter}&limit=200`);
@@ -1571,6 +1784,103 @@ async function renderFilesPage() {
     }
 
     const countLabel = `${result.total} 个${mediaTypeFilter === 'all' ? '媒体' : mediaTypeFilter === 'image' ? '图片' : mediaTypeFilter === 'video' ? '视频' : '文件'}`;
+    const isImageView = mediaViewGrid && (mediaTypeFilter === 'image' || mediaTypeFilter === 'all');
+    const images = result.items.filter(f => f.type === 'image' && f.mediaPath);
+
+    if (isImageView && images.length > 0) {
+      list.innerHTML = `<div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">共 ${countLabel}，图片 ${images.length} 张</div>
+      <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px">
+        ${images.map((f, i) => `<div style="position:relative;cursor:pointer" onclick="openMediaLightbox(${i})" data-img-idx="${i}">
+          <img src="${API}/api/image?path=${encodeURIComponent(f.mediaPath)}&_t=1" style="width:120px;height:120px;object-fit:cover;border-radius:8px;background:var(--bg-hover)" loading="lazy" onerror="this.outerHTML='<div style=\\'width:120px;height:120px;background:var(--bg-hover);border-radius:8px;display:flex;align-items:center;justify-content:center\\'>❌</div>'">
+          <div style="position:absolute;bottom:4px;left:4px;right:4px;font-size:10px;color:white;background:rgba(0,0,0,0.6);border-radius:4px;padding:2px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(f.talkerName || '')} ${new Date(f.time).toLocaleDateString('zh-CN')}</div>
+        </div>`).join('')}
+      </div>`;
+      const imgList = images.map(f => `${API}/api/image?path=${encodeURIComponent(f.mediaPath)}&_t=1`);
+      window.openMediaLightbox = function(idx) {
+        const fakeImg = { src: imgList[idx] };
+        const overlay = document.createElement('div');
+        overlay.className = 'lightbox-overlay';
+        overlay.innerHTML = `
+          <div class="lightbox-close">&times;</div>
+          ${imgList.length > 1 ? '<div class="lightbox-nav lightbox-prev">&#8249;</div>' : ''}
+          <img class="lightbox-img" src="${imgList[idx]}" alt="">
+          ${imgList.length > 1 ? '<div class="lightbox-nav lightbox-next">&#8250;</div>' : ''}
+          <div class="lightbox-toolbar">
+            <div class="lightbox-counter">${idx + 1} / ${imgList.length}</div>
+            <button class="btn btn-secondary btn-sm" id="lightboxOriginal">查看原图</button>
+            <a class="btn btn-secondary btn-sm" id="lightboxDownload" download href="${imgList[idx]}">保存</a>
+          </div>`;
+        document.body.appendChild(overlay);
+        let cur = idx;
+        const lbImg = overlay.querySelector('.lightbox-img');
+        const counter = overlay.querySelector('.lightbox-counter');
+        const origBtn = overlay.querySelector('#lightboxOriginal');
+        const dlBtn = overlay.querySelector('#lightboxDownload');
+        let viewingOrig = false;
+        function show(i) {
+          if (i < 0) i = imgList.length - 1;
+          if (i >= imgList.length) i = 0;
+          cur = i;
+          lbImg.src = imgList[cur];
+          counter.textContent = `${cur + 1} / ${imgList.length}`;
+          dlBtn.href = imgList[cur];
+          viewingOrig = false;
+          origBtn.textContent = '查看原图';
+        }
+        overlay.querySelector('.lightbox-close').onclick = () => overlay.remove();
+        overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+        origBtn.onclick = (e) => { e.stopPropagation();
+          if (!viewingOrig) { lbImg.src = imgList[cur] + '&original=true'; origBtn.textContent = '查看缩略图'; viewingOrig = true; }
+          else { lbImg.src = imgList[cur]; origBtn.textContent = '查看原图'; viewingOrig = false; }
+};
+
+window.aiSentiment = async function(btn) {
+  if (!state.currentSession) return;
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '分析中...';
+  try {
+    const res = await api('/api/ai/sentiment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ talker: state.currentSession }),
+    });
+    if (res.error) { showToast(res.error, 'error'); return; }
+    const colorMap = { '积极': '#22c55e', '消极': '#ef4444', '中性': '#64748b' };
+    const color = colorMap[res.overall] || '#64748b';
+    const score = typeof res.score === 'number' ? (res.score * 100).toFixed(0) : '-';
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center';
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `<div class="stats-card" style="width:480px;max-height:80vh;overflow-y:auto;padding:24px">
+      <div class="stats-section-title" style="margin-bottom:16px">情感分析</div>
+      <div style="display:flex;gap:24px;align-items:center;margin-bottom:16px">
+        <div style="text-align:center">
+          <div style="font-size:48px;color:${color};font-weight:700">${score}%</div>
+          <div style="font-size:14px;color:${color};font-weight:600">${escapeHtml(res.overall || '未知')}</div>
+        </div>
+        <div style="flex:1;font-size:14px;line-height:1.8;color:var(--text-primary)">${escapeHtml(res.summary || '无分析结果')}</div>
+      </div>
+      ${res.keywords?.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap">${res.keywords.map(k => `<span style="padding:4px 10px;background:var(--bg-secondary);border-radius:12px;font-size:12px;color:var(--text-secondary)">${escapeHtml(k)}</span>`).join('')}</div>` : ''}
+      <button class="btn btn-secondary" style="width:100%;margin-top:16px" onclick="this.closest('div[style]').remove()">关闭</button>
+    </div>`;
+    document.body.appendChild(overlay);
+  } catch (e) {
+    showToast('分析失败: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
+  }
+};
+
+        const prev = overlay.querySelector('.lightbox-prev');
+        const next = overlay.querySelector('.lightbox-next');
+        if (prev) prev.onclick = (e) => { e.stopPropagation(); show(cur - 1); };
+        if (next) next.onclick = (e) => { e.stopPropagation(); show(cur + 1); };
+        const onKey = (e) => { if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', onKey); } else if (e.key === 'ArrowLeft') show(cur - 1); else if (e.key === 'ArrowRight') show(cur + 1); };
+        document.addEventListener('keydown', onKey);
+      };
+    } else {
     list.innerHTML = `<div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">共 ${countLabel}</div>
     <div style="display:flex;flex-direction:column;gap:8px">
     ${result.items.map(f => {
@@ -1605,6 +1915,7 @@ async function renderFilesPage() {
       </div>`;
     }).join('')}
     </div>`;
+    } // end else (list view)
 
     list.querySelectorAll('.fav-card-clickable').forEach(el => {
       el.onclick = () => {
@@ -1868,8 +2179,12 @@ function renderSetupPage() {
           <p style="color:var(--text-secondary);margin-bottom:12px">选择你自己的微信号，用于在聊天中正确显示头像。</p>
           <div class="input-group">
             <label>你的微信 wxid</label>
-            <input class="input-field" id="setupSelfWxid" placeholder="wxid_xxxxxxxxxxxxxxxx" value="${escapeHtml(selfWxid)}">
+            <div style="display:flex;gap:8px">
+              <input class="input-field" id="setupSelfWxid" placeholder="wxid_xxxxxxxxxxxxxxxx" value="${escapeHtml(selfWxid)}" style="flex:1">
+              <button class="btn btn-secondary" onclick="pickSelfWxid()" style="white-space:nowrap">从通讯录选择</button>
+            </div>
             <p style="color:var(--text-muted);font-size:12px;margin-top:4px">可在通讯录页搜索自己的昵称找到 wxid</p>
+            <div id="selfWxidPicker" style="display:none;margin-top:8px"></div>
           </div>
           <button class="btn btn-primary" onclick="doSaveSelfWxid(this)">保存</button>
           <div id="selfWxidResult" class="log-output" style="margin-top:12px;display:none"></div>
@@ -1979,6 +2294,25 @@ window.doDecrypt = async function(btn) {
   }
 };
 
+window.pickSelfWxid = async function() {
+  const picker = $('#selfWxidPicker');
+  if (picker.style.display !== 'none') { picker.style.display = 'none'; return; }
+  picker.style.display = 'block';
+  picker.innerHTML = '<input class="input-field" id="selfWxidSearch" placeholder="搜索昵称/备注..." style="width:100%;margin-bottom:8px"><div id="selfWxidList" style="max-height:200px;overflow-y:auto"></div>';
+  const searchInput = $('#selfWxidSearch');
+  searchInput.focus();
+  async function search(q) {
+    const contacts = await api('/api/contacts?keyword=' + encodeURIComponent(q) + '&limit=20');
+    const list = $('#selfWxidList');
+    if (!contacts.length) { list.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px">无结果</div>'; return; }
+    list.innerHTML = contacts.map(c => `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;border-radius:6px" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background=''" onclick="$('#setupSelfWxid').value='${escapeHtml(c.username)}';$('#selfWxidPicker').style.display='none'">
+      <img src="${API}/api/avatar?wxid=${encodeURIComponent(c.username)}" style="width:28px;height:28px;border-radius:50%" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><rect fill=%22%23ccc%22 width=%2240%22 height=%2240%22/></svg>'">
+      <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500">${escapeHtml(c.nickname || c.username)}</div><div style="font-size:11px;color:var(--text-muted)">${escapeHtml(c.username)}</div></div>
+    </div>`).join('');
+  }
+  searchInput.oninput = () => search(searchInput.value);
+  search('');
+};
 window.doSaveSelfWxid = async function(btn) {
   const wxid = $('#setupSelfWxid')?.value?.trim();
   if (!wxid) { showToast('请输入 wxid', 'error'); return; }
@@ -2181,6 +2515,9 @@ function renderPage() {
       break;
     case 'files':
       renderFilesPage();
+      break;
+    case 'timeline':
+      renderTimelinePage();
       break;
     case 'setup':
       renderSetupPage();
