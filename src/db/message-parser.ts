@@ -138,6 +138,7 @@ export async function parseMessageRow(
   }
 
   let subMessages: string[] | undefined;
+  let referSeq: number | undefined;
   if (localType === 49 && content.includes("<")) {
     const appResult = extractAppMessage(content);
     content = appResult.content;
@@ -146,6 +147,7 @@ export async function parseMessageRow(
     appThumbUrl = appResult.appThumbUrl;
     referContent = appResult.referContent;
     referSender = appResult.referSender;
+    referSeq = appResult.referSeq;
     subMessages = appResult.subMessages;
   }
 
@@ -200,6 +202,7 @@ export async function parseMessageRow(
     appThumbUrl,
     referContent,
     referSender,
+    referSeq,
     locationLabel,
     locationPoiName,
     voiceDuration,
@@ -330,6 +333,7 @@ export interface AppMessageResult {
   appThumbUrl?: string;
   referContent?: string;
   referSender?: string;
+  referSeq?: number;
   subMessages?: string[];
 }
 
@@ -360,8 +364,10 @@ export function extractAppMessage(raw: string): AppMessageResult {
     const refBlock = referMatch[1];
     const refContentMatch = refBlock.match(/<content>([\s\S]*?)<\/content>/);
     const refSenderMatch = refBlock.match(/<displayname>([\s\S]*?)<\/displayname>/);
+    const refSeqMatch = refBlock.match(/<svrid>(\d+)<\/svrid>/);
     result.referContent = refContentMatch ? refContentMatch[1].trim() : "";
     result.referSender = refSenderMatch ? refSenderMatch[1].trim() : "";
+    result.referSeq = refSeqMatch ? Number(refSeqMatch[1]) : undefined;
   }
 
   if (result.appType === 57) {

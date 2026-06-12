@@ -3,6 +3,7 @@ import { getShards } from "./query-messages.js";
 import { getConnection } from "./manager.js";
 import { listMsgTables } from "./message-parser.js";
 import { md5 } from "./query-messages.js";
+import { decodeMessageContent } from "./codec.js";
 
 export interface EmojiItem {
   url: string;
@@ -38,7 +39,7 @@ export async function getEmojis(
 
     for (const tableName of tables) {
       const talker = talkerReverse.get(tableName) || tableName;
-      extractEmojisFromTable(db, tableName, talker, emojiMap);
+      await extractEmojisFromTable(db, tableName, talker, emojiMap);
     }
   }
 
@@ -49,12 +50,12 @@ export async function getEmojis(
   return { total, items };
 }
 
-function extractEmojisFromTable(
+async function extractEmojisFromTable(
   db: Database,
   tableName: string,
   talker: string,
   emojiMap: Map<string, EmojiItem>
-): void {
+): Promise<void> {
   try {
     const rows = db.exec(
       `SELECT message_content, create_time FROM "${tableName}" WHERE (local_type & 0xFFFF) = 47`
@@ -62,8 +63,15 @@ function extractEmojisFromTable(
     if (!rows.length) return;
 
     for (const row of rows[0].values) {
-      const content = String(row[0] || "");
+      const raw = row[0];
       const createTime = Number(row[1]) * 1000;
+
+      let content: string;
+      if (raw instanceof Uint8Array || Buffer.isBuffer(raw)) {
+        content = await decodeMessageContent(Buffer.from(raw));
+      } else {
+        content = String(raw || "");
+      }
 
       let url = "";
       let source: EmojiItem["source"] = "local";

@@ -256,7 +256,7 @@ function renderMessageContent(msg) {
     const fileLink = isFile ? `<a href="${API}/api/file?path=${encodeURIComponent(msg.mediaPath)}" target="_blank" class="file-link">[文件] ${escapeHtml(title)}</a>` : '';
     const link = isFile ? fileLink : (msg.appUrl && msg.appType !== 57 ? `<a class="app-link" href="${escapeHtml(msg.appUrl)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : `<span>${escapeHtml(title)}</span>`);
     const thumb = msg.appThumbUrl ? `<img class="app-thumb" src="${msg.appThumbUrl}" loading="lazy" onerror="this.remove()">` : '';
-    const refHtml = isReply ? `<div class="refer-block" onclick="scrollToMsg('${msg.talker}',${msg.seq})">▎${escapeHtml(msg.referSender || '')}: ${escapeHtml((msg.referContent || '').substring(0, 100))}</div>` : '';
+    const refHtml = isReply ? `<div class="refer-block" onclick="scrollToMsg(${msg.referSeq || 0})">▎${escapeHtml(msg.referSender || '')}: ${escapeHtml((msg.referContent || '').substring(0, 100))}</div>` : '';
     const mergedHtml = isMerged ? `<div class="merged-msgs collapsed" data-seq="${msg.seq}">${msg.subMessages.map(s => `<div class="merged-item">${escapeHtml(s)}</div>`).join('')}<div style="display:flex;gap:4px;margin-top:4px"><button class="merged-toggle" onclick="toggleMerged(this)">${msg.subMessages.length > 10 ? '展开全部 ' + msg.subMessages.length + ' 条' : '展开'}</button><button class="merged-toggle" onclick="showMergedPopup(this)">弹窗查看</button></div></div>` : '';
     const descHtml = !isMerged && desc && !isReply && !isFile ? `<div class="app-desc">${escapeHtml(desc.substring(0, 200))}${desc.length > 200 ? '...' : ''}</div>` : '';
     bubble = `<div class="message-bubble app-bubble">${thumb}${refHtml}<div class="app-title">${link}</div>${descHtml}${mergedHtml}</div>`;
@@ -918,7 +918,8 @@ document.addEventListener('click', function(e) {
   }
 });
 
-window.scrollToMsg = function(talker, seq) {
+window.scrollToMsg = function(seq) {
+  if (!seq) return;
   const el = document.getElementById('msg-' + seq);
   if (el) {
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });

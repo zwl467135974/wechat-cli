@@ -15,6 +15,7 @@ export interface Message {
   appThumbUrl?: string;
   referContent?: string;
   referSender?: string;
+  referSeq?: number;
   locationLabel?: string;
   locationPoiName?: string;
   voiceDuration?: number;
