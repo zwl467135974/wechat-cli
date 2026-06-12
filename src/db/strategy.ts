@@ -5,7 +5,8 @@ export type GroupType =
   | "video"
   | "file"
   | "voice"
-  | "session";
+  | "session"
+  | "favorite";
 
 export interface FileMeta {
   type: GroupType;
@@ -20,6 +21,7 @@ const V4_PATTERNS: Array<{ type: GroupType; re: RegExp }> = [
   { type: "video", re: /^hardlink\.db$/i },
   { type: "file", re: /^hardlink\.db$/i },
   { type: "voice", re: /^media(_[0-9]{1,2})?\.db$/i },
+  { type: "favorite", re: /^favorite\.db$/i },
 ];
 
 export function identify(filename: string): FileMeta | null {
@@ -44,4 +46,5 @@ export const SUB_DIR_MAP: Record<string, string> = {
   video: "hardlink",
   file: "hardlink",
   voice: "media",
+  favorite: "favorite",
 };

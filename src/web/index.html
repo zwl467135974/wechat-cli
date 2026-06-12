@@ -17,6 +17,7 @@
       <button class="nav-btn" data-page="search">搜索</button>
       <button class="nav-btn" data-page="dashboard">统计</button>
       <button class="nav-btn" data-page="report">年度报告</button>
+      <button class="nav-btn" data-page="bookmarks">收藏</button>
       <button class="nav-btn" data-page="setup">设置</button>
     </nav>
     <div class="header-actions">
@@ -68,11 +69,66 @@ function showToast(msg, type = 'success') {
   setTimeout(() => t.remove(), 3000);
 }
 
+window.aiSummarize = async function(btn) {
+  if (!state.messages.length) { showToast('没有消息可摘要', 'error'); return; }
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '生成中...';
+  try {
+    const recent = state.messages.slice(-50);
+    const lines = recent.map(m => {
+      const t = new Date(m.time).toLocaleString('zh-CN');
+      const s = m.isSelf ? '我' : (m.sender || '对方');
+      const c = m.content.substring(0, 100);
+      return `[${t}] ${s}: ${c}`;
+    });
+    const res = await api('/api/ai/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [
+          { role: 'system', content: '你是一个聊天记录分析助手。请用简洁的中文总结以下聊天记录的要点，包括主要话题、关键决定和待办事项（如有）。控制在200字以内。' },
+          { role: 'user', content: lines.join('\n') },
+        ],
+      }),
+    });
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center';
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `<div class="stats-card" style="width:480px;max-height:80vh;overflow-y:auto;padding:24px">
+      <div class="stats-section-title" style="margin-bottom:12px">AI 对话摘要</div>
+      <div style="font-size:14px;line-height:1.8;color:var(--text-primary);white-space:pre-wrap">${escapeHtml(res.content)}</div>
+      <button class="btn btn-secondary" style="width:100%;margin-top:16px" onclick="this.closest('div[style]').remove()">关闭</button>
+    </div>`;
+    document.body.appendChild(overlay);
+  } catch (e) {
+    showToast('摘要失败: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
+  }
+};
+
 window.toggleMerged = function(btn) {
   const container = btn.parentElement;
   const collapsed = container.classList.contains('collapsed');
   container.classList.toggle('collapsed');
   btn.textContent = collapsed ? '收起' : (container.querySelectorAll('.merged-item').length > 10 ? '展开全部 ' + container.querySelectorAll('.merged-item').length + ' 条' : '展开');
+};
+
+window.showMergedPopup = function(btn) {
+  const container = btn.closest('.merged-msgs');
+  if (!container) return;
+  const items = [...container.querySelectorAll('.merged-item')].map(el => el.textContent);
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<div class="stats-card" style="width:560px;max-height:80vh;overflow-y:auto;padding:24px">
+    <div class="stats-section-title" style="margin-bottom:12px">合并转发消息 (${items.length} 条)</div>
+    <div style="font-size:14px;line-height:1.8">${items.map((t, i) => `<div style="padding:8px 0;border-bottom:1px solid var(--border)"><span style="color:var(--text-secondary);font-size:12px;margin-right:8px">${i + 1}</span>${escapeHtml(t)}</div>`).join('')}</div>
+    <button class="btn btn-secondary" style="width:100%;margin-top:16px" onclick="this.closest('div[style]').remove()">关闭</button>
+  </div>`;
+  document.body.appendChild(overlay);
 };
 
 function escapeHtml(s) {
@@ -198,7 +254,7 @@ function renderMessageContent(msg) {
     const link = isFile ? fileLink : (msg.appUrl && msg.appType !== 57 ? `<a class="app-link" href="${escapeHtml(msg.appUrl)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : `<span>${escapeHtml(title)}</span>`);
     const thumb = msg.appThumbUrl ? `<img class="app-thumb" src="${msg.appThumbUrl}" loading="lazy" onerror="this.remove()">` : '';
     const refHtml = isReply ? `<div class="refer-block">▎${escapeHtml(msg.referSender || '')}: ${escapeHtml((msg.referContent || '').substring(0, 100))}</div>` : '';
-    const mergedHtml = isMerged ? `<div class="merged-msgs collapsed" data-seq="${msg.seq}">${msg.subMessages.map(s => `<div class="merged-item">${escapeHtml(s)}</div>`).join('')}<button class="merged-toggle" onclick="toggleMerged(this)">${msg.subMessages.length > 10 ? '展开全部 ' + msg.subMessages.length + ' 条' : '展开'}</button></div>` : '';
+    const mergedHtml = isMerged ? `<div class="merged-msgs collapsed" data-seq="${msg.seq}">${msg.subMessages.map(s => `<div class="merged-item">${escapeHtml(s)}</div>`).join('')}<div style="display:flex;gap:4px;margin-top:4px"><button class="merged-toggle" onclick="toggleMerged(this)">${msg.subMessages.length > 10 ? '展开全部 ' + msg.subMessages.length + ' 条' : '展开'}</button><button class="merged-toggle" onclick="showMergedPopup(this)">弹窗查看</button></div></div>` : '';
     const descHtml = !isMerged && desc && !isReply && !isFile ? `<div class="app-desc">${escapeHtml(desc.substring(0, 200))}${desc.length > 200 ? '...' : ''}</div>` : '';
     bubble = `<div class="message-bubble app-bubble">${thumb}${refHtml}<div class="app-title">${link}</div>${descHtml}${mergedHtml}</div>`;
   } else {
@@ -207,7 +263,7 @@ function renderMessageContent(msg) {
   }
 
   return `
-    <div class="message-row ${side}" data-raw-content="${escapeHtml(msg.content)}" oncontextmenu="showMsgMenu(event, this)">
+    <div class="message-row ${side}" data-raw-content="${escapeHtml(msg.content)}" data-seq="${msg.seq}" data-talker="${escapeHtml(msg.talker)}" data-time="${escapeHtml(msg.time)}" data-sender="${escapeHtml(msg.sender)}" oncontextmenu="showMsgMenu(event, this)">
       ${avatar}
       <div class="msg-body">${senderName}
       ${bubble}
@@ -393,6 +449,7 @@ function renderChatPage() {
             <input type="date" id="dateTo" style="padding:4px 6px;font-size:12px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius)" value="${$('#dateTo')?.value || ''}" title="结束日期">
             <button class="btn btn-secondary btn-sm" onclick="searchInChat()">搜索</button>
             <button class="btn btn-secondary btn-sm" id="chatSearchClear" style="display:none" onclick="clearChatSearch()">清除</button>
+            ${state.aiEnabled ? `<button class="btn btn-primary btn-sm" onclick="aiSummarize(this)">AI 摘要</button>` : ''}
           </div>` : ''}
           <div style="display:flex;flex:1;overflow:hidden">
             <div class="messages-container" id="messagesContainer" style="flex:1">${messagesHtml}</div>
@@ -766,6 +823,7 @@ window.showMsgMenu = function(e, row) {
   menu.style.top = Math.min(e.clientY, window.innerHeight - 100) + 'px';
 
   let items = '';
+  items += `<div class="ctx-item" onclick="bookmarkMsg(this)">⭐ 收藏</div>`;
   if (raw) {
     items += `<div class="ctx-item" onclick="copyText(this)">复制文本</div>`;
   }
@@ -793,6 +851,27 @@ function closeMsgMenu() {
   const m = $('#msgContextMenu');
   if (m) m.remove();
 }
+
+window.bookmarkMsg = async function(el) {
+  const row = el._row;
+  if (!row) return;
+  try {
+    await api('/api/bookmark', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        talker: row.dataset.talker,
+        seq: Number(row.dataset.seq),
+        time: row.dataset.time,
+        sender: row.dataset.sender,
+        content: row.dataset.rawContent?.substring(0, 500),
+      }),
+    });
+    showToast('已收藏');
+  } catch (e) {
+    showToast('收藏失败: ' + e.message, 'error');
+  }
+};
 
 window.copyText = function(el) {
   const raw = el._row.getAttribute('data-raw-content') || '';
@@ -836,6 +915,42 @@ document.addEventListener('click', function(e) {
   }
 });
 
+window.showContactDetail = async function(username) {
+  if (!username) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'contactDetailOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center';
+  overlay.innerHTML = '<div class="stats-card" style="width:360px;max-height:80vh;overflow-y:auto;padding:24px"><div class="loading-spinner" style="margin:0 auto"></div></div>';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+  try {
+    const d = await api(`/api/contact-detail?username=${encodeURIComponent(username)}`);
+    const name = d.remark || d.nickname || d.alias || d.username;
+    const avatar = d.bigHeadUrl || d.smallHeadUrl;
+    const card = document.querySelector('#contactDetailOverlay .stats-card');
+    card.innerHTML = `
+      <div style="text-align:center;margin-bottom:20px">
+        ${avatar ? `<img src="${avatar}" style="width:80px;height:80px;border-radius:50%;object-fit:cover" onerror="this.outerHTML='<div style=\\'width:80px;height:80px;border-radius:50%;background:var(--bg-hover);color:var(--text-primary);display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto\\'>${getInitial(name)}</div>'">` : `<div style="width:80px;height:80px;border-radius:50%;background:var(--bg-hover);color:var(--text-primary);display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto">${getInitial(name)}</div>`}
+        <div style="font-size:18px;font-weight:600;color:var(--text-primary);margin-top:12px">${escapeHtml(name)}</div>
+        ${d.remark && d.nickname ? `<div style="font-size:13px;color:var(--text-secondary);margin-top:2px">昵称: ${escapeHtml(d.nickname)}</div>` : ''}
+      </div>
+      <div style="font-size:13px;color:var(--text-secondary)">
+        ${d.alias ? `<div style="padding:6px 0;border-bottom:1px solid var(--border)">微信号: ${escapeHtml(d.alias)}</div>` : ''}
+        <div style="padding:6px 0;border-bottom:1px solid var(--border)">wxid: ${escapeHtml(d.username)}</div>
+        ${d.msgCount > 0 ? `<div style="padding:6px 0;border-bottom:1px solid var(--border)">消息总数: ${d.msgCount.toLocaleString()} 条</div>` : ''}
+        ${d.firstMsg ? `<div style="padding:6px 0;border-bottom:1px solid var(--border)">首次聊天: ${new Date(d.firstMsg).toLocaleDateString('zh-CN')}</div>` : ''}
+        ${d.lastMsg ? `<div style="padding:6px 0;border-bottom:1px solid var(--border)">最近聊天: ${new Date(d.lastMsg).toLocaleDateString('zh-CN')}</div>` : ''}
+      </div>
+      <div style="margin-top:16px;display:flex;gap:8px">
+        <button class="btn btn-primary" style="flex:1" onclick="document.getElementById('contactDetailOverlay').remove();state.page='chat';updateNav();selectSession('${escapeHtml(d.username)}')">发消息</button>
+        <button class="btn btn-secondary" style="flex:1" onclick="document.getElementById('contactDetailOverlay').remove()">关闭</button>
+      </div>`;
+  } catch (e) {
+    const card = document.querySelector('#contactDetailOverlay .stats-card');
+    if (card) card.innerHTML = `<div style="color:var(--text-secondary);text-align:center;padding:20px">加载失败: ${escapeHtml(e.message)}</div><button class="btn btn-secondary" style="width:100%;margin-top:12px" onclick="document.getElementById('contactDetailOverlay').remove()">关闭</button>`;
+  }
+};
+
 function renderContactsPage() {
   const cards = state.contacts.map(c => {
     const name = c.remark || c.nickname || c.alias || c.username;
@@ -872,6 +987,10 @@ function renderContactsPage() {
       state.page = 'chat';
       updateNav();
       selectSession(el.dataset.username);
+    };
+    el.oncontextmenu = (e) => {
+      e.preventDefault();
+      showContactDetail(el.dataset.username);
     };
   });
 }
@@ -1308,6 +1427,163 @@ function renderYearReportContent(r) {
     </div>`;
 }
 
+let bookmarkTab = 'manual';
+let wxFavFilter = 0;
+
+async function renderBookmarksPage() {
+  const main = $('#mainContent');
+  main.innerHTML = `
+    <div class="page-container">
+      <div class="tab-bar">
+        <button class="tab-btn ${bookmarkTab === 'manual' ? 'active' : ''}" onclick="switchBookmarkTab('manual')">手动收藏</button>
+        <button class="tab-btn ${bookmarkTab === 'wx' ? 'active' : ''}" onclick="switchBookmarkTab('wx')">微信收藏</button>
+      </div>
+      <div id="bookmarksList"><div class="loading-spinner" style="margin:40px auto"></div></div>
+    </div>`;
+  if (bookmarkTab === 'manual') {
+    await renderManualBookmarks();
+  } else {
+    await renderWxFavorites();
+  }
+}
+
+window.switchBookmarkTab = function(tab) {
+  bookmarkTab = tab;
+  renderBookmarksPage();
+};
+
+async function renderManualBookmarks() {
+  const list = $('#bookmarksList');
+  try {
+    const bookmarks = await api('/api/bookmarks');
+    if (!bookmarks.length) {
+      list.innerHTML = `<div class="fav-empty"><div class="fav-empty-icon">⭐</div>暂无手动收藏<div class="fav-empty-hint">右键点击聊天消息即可收藏</div></div>`;
+      return;
+    }
+    list.innerHTML = bookmarks.map(b => {
+      const timeStr = b.time ? new Date(b.time).toLocaleString('zh-CN') : '';
+      return `<div class="fav-card fav-card-clickable" data-bookmark-id="${escapeHtml(b.id)}">
+        <div style="flex:1;min-width:0">
+          <div class="fav-meta">
+            ${b.sender ? `<span class="fav-meta-item">${escapeHtml(b.sender)}</span>` : ''}
+            ${timeStr ? `<span class="fav-meta-item">${timeStr}</span>` : ''}
+            <span class="fav-meta-item" style="opacity:0.6">${escapeHtml(b.talker)}</span>
+          </div>
+          <div class="fav-content">${escapeHtml(b.content)}</div>
+          ${b.note ? `<div style="font-size:12px;color:var(--accent);margin-top:6px">📌 ${escapeHtml(b.note)}</div>` : ''}
+        </div>
+        <div class="fav-actions">
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();removeBookmarkItem('${escapeHtml(b.id)}')" title="取消收藏">✕</button>
+        </div>
+      </div>`;
+    }).join('');
+    list.querySelectorAll('.fav-card-clickable').forEach(el => {
+      el.onclick = () => {
+        const id = el.getAttribute('data-bookmark-id') || '';
+        state.page = 'chat';
+        updateNav();
+        selectSession(id.split('::')[0]);
+      };
+    });
+  } catch (e) {
+    list.innerHTML = `<div class="fav-empty">加载失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function renderWxFavorites() {
+  const list = $('#bookmarksList');
+  try {
+    const result = await api(`/api/wx-favorites${wxFavFilter ? '?type=' + wxFavFilter : ''}`);
+    const typeFilters = [
+      { value: 0, label: '全部' },
+      { value: 1, label: '文本' },
+      { value: 2, label: '图片' },
+      { value: 5, label: '链接' },
+      { value: 14, label: '图文' },
+    ];
+    let filterHtml = `<div class="fav-filter-bar">${typeFilters.map(f =>
+      `<button class="fav-filter-btn ${wxFavFilter === f.value ? 'active' : ''}" onclick="wxFavFilter=${f.value};renderWxFavorites()">${f.label}</button>`
+    ).join('')}`;
+    if (result.total > 0) {
+      filterHtml += `<span class="fav-meta-item" style="margin-left:8px">共 ${result.total} 条</span>`;
+    }
+    filterHtml += '</div>';
+
+    if (!result.items.length) {
+      list.innerHTML = `${filterHtml}<div class="fav-empty"><div class="fav-empty-icon">📂</div>微信收藏为空</div>`;
+      return;
+    }
+
+    const itemsHtml = result.items.map(f => {
+      const timeStr = new Date(f.updateTime).toLocaleString('zh-CN');
+      const fromLabel = resolveWxName(f.fromUser);
+      const realLabel = f.realChatName ? resolveWxName(f.realChatName) : '';
+      const badgeClass = getFavBadgeClass(f.type);
+      const typeLabel = getTypeLabel(f.type);
+
+      let bodyHtml = '';
+      if (f.type === 2) {
+        bodyHtml = `<div style="color:var(--text-secondary);font-style:italic">[图片] — 微信内部格式，暂无法直接展示</div>`;
+      } else if (f.type === 5) {
+        const titleHtml = f.title ? `<div style="font-size:14px;font-weight:500;color:var(--text-primary);margin-bottom:4px">${escapeHtml(f.title)}</div>` : '';
+        const descHtml = f.desc ? `<div style="font-size:13px;color:var(--text-secondary);margin-bottom:4px">${escapeHtml(f.desc).substring(0, 200)}</div>` : '';
+        const linkHtml = f.linkUrl ? `<a href="${escapeHtml(f.linkUrl)}" target="_blank" rel="noopener" style="font-size:12px;color:var(--accent);word-break:break-all">${escapeHtml(f.linkUrl.substring(0, 80))}${f.linkUrl.length > 80 ? '...' : ''}</a>` : '';
+        const thumbHtml = f.thumbUrl ? `<div style="margin-top:8px"><img src="${escapeHtml(f.thumbUrl)}" style="max-width:200px;max-height:120px;border-radius:6px;object-fit:cover" loading="lazy" onerror="this.remove()"></div>` : '';
+        bodyHtml = `${titleHtml}${descHtml}${linkHtml}${thumbHtml}`;
+      } else {
+        bodyHtml = `<div class="fav-content">${escapeHtml(f.summary).replace(/\n/g, '<br>')}</div>`;
+      }
+
+      return `<div class="fav-card">
+        <div style="flex:1;min-width:0">
+          <div class="fav-meta">
+            <span class="fav-type-badge ${badgeClass}">${typeLabel}</span>
+            <span class="fav-meta-item">${timeStr}</span>
+            ${fromLabel ? `<span class="fav-meta-item">来自 ${escapeHtml(fromLabel)}${realLabel ? ' · ' + escapeHtml(realLabel) : ''}</span>` : ''}
+          </div>
+          ${bodyHtml}
+        </div>
+      </div>`;
+    }).join('');
+
+    list.innerHTML = `${filterHtml}<div style="display:flex;flex-direction:column;gap:8px">${itemsHtml}</div>`;
+  } catch (e) {
+    list.innerHTML = `<div class="fav-empty">加载失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function resolveWxName(wxid) {
+  if (!wxid) return '';
+  const session = state.sessions.find(s => s.username === wxid);
+  if (session) return session.remark || session.nickname || wxid;
+  const contact = state.contacts.find(c => c.username === wxid);
+  if (contact) return contact.remark || contact.nickname || wxid;
+  return wxid;
+}
+
+function getTypeLabel(type) {
+  const map = {1:'文本',2:'图片',3:'语音',4:'视频',5:'链接',6:'位置',8:'视频号',14:'图文',16:'文件',18:'小程序',19:'聊天记录',20:'音乐'};
+  return map[type] || '类型' + type;
+}
+
+function getFavBadgeClass(type) {
+  const map = {1:'fav-type-badge-text',2:'fav-type-badge-image',5:'fav-type-badge-link',14:'fav-type-badge-rich',4:'fav-type-badge-video',8:'fav-type-badge-video',16:'fav-type-badge-file'};
+  return map[type] || 'fav-type-badge-other';
+}
+
+window.renderManualBookmarks = renderManualBookmarks;
+window.renderWxFavorites = renderWxFavorites;
+
+window.removeBookmarkItem = async function(id) {
+  try {
+    await api(`/api/bookmark/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    showToast('已取消收藏');
+    renderBookmarksPage();
+  } catch (e) {
+    showToast('操作失败: ' + e.message, 'error');
+  }
+};
+
 function renderSetupPage() {
   const selfWxid = state.selfWxid || '';
   const config = state.setupConfig || {};
@@ -1656,6 +1932,9 @@ function renderPage() {
       break;
     case 'report':
       renderYearReport();
+      break;
+    case 'bookmarks':
+      renderBookmarksPage();
       break;
     case 'setup':
       renderSetupPage();

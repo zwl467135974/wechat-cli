@@ -23,6 +23,8 @@ import {
 } from "./image.js";
 import { doRefresh } from "./refresh.js";
 import { callAi, isAiEnabled } from "./ai.js";
+import { addBookmark, removeBookmark, getBookmarks, isBookmarked } from "../db/bookmark-store.js";
+import { getWxFavorites, getFavoriteTypeLabel } from "../db/query-favorites.js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -165,9 +167,40 @@ app.get("/api/contacts", async (c) => {
   const keyword = c.req.query("keyword");
   const limit = Number(c.req.query("limit")) || 200;
   const offset = Number(c.req.query("offset")) || 0;
-
   const contacts = await getContacts(config.dataDir, keyword, limit, offset);
   return c.json(contacts);
+});
+
+app.get("/api/contact-detail", async (c) => {
+  const config = getConfig();
+  const username = c.req.query("username");
+  if (!username) return c.json({ error: "username required" }, 400);
+  const contacts = await getContacts(config.dataDir, username, 1, 0);
+  const contact = contacts.find(ct => ct.username === username);
+  if (!contact) return c.json({ error: "not found" }, 404);
+
+  let msgCount = 0;
+  let firstMsg: string | null = null;
+  let lastMsg: string | null = null;
+  try {
+    const { getMessages } = await import("../db/query-messages.js");
+    const recent = await getMessages(config.dataDir, username, { limit: 1, reverse: false });
+    msgCount = await getMessages(config.dataDir, username, { limit: 1, offset: 0, reverse: true }).then(m => m.length);
+    const all = await getMessages(config.dataDir, username, { limit: 1, offset: 0, reverse: false });
+    if (all.length) firstMsg = all[0].time;
+    const latest = await getMessages(config.dataDir, username, { limit: 1, reverse: true });
+    if (latest.length) lastMsg = latest[0].time;
+  } catch { /* ignore */ }
+
+  let sharedGroups: string[] = [];
+  try {
+    const sessions = await getSessions(config.dataDir);
+    sharedGroups = sessions
+      .filter(s => s.username.endsWith("@chatroom"))
+      .map(s => s.remark || s.nickname || s.username);
+  } catch { /* ignore */ }
+
+  return c.json({ ...contact, msgCount, firstMsg, lastMsg, sharedGroups });
 });
 
 app.get("/api/messages", async (c) => {
@@ -547,6 +580,40 @@ app.post("/api/ai/chat", async (c) => {
     const msg = e instanceof Error ? e.message : String(e);
     return c.json({ error: msg }, 500);
   }
+});
+
+app.get("/api/bookmarks", async (c) => {
+  const talker = c.req.query("talker");
+  return c.json(getBookmarks(talker || undefined));
+});
+
+app.post("/api/bookmark", async (c) => {
+  const body = await c.req.json();
+  if (!body.talker || !body.seq) return c.json({ error: "talker and seq required" }, 400);
+  const entry = addBookmark({
+    talker: body.talker,
+    seq: body.seq,
+    time: body.time || "",
+    sender: body.sender || "",
+    content: body.content || "",
+    note: body.note || "",
+  });
+  return c.json({ success: true, bookmark: entry });
+});
+
+app.delete("/api/bookmark/:id", async (c) => {
+  const id = c.req.param("id");
+  const ok = removeBookmark(id);
+  return c.json({ success: ok });
+});
+
+app.get("/api/wx-favorites", async (c) => {
+  const config = getConfig();
+  const type = c.req.query("type") ? Number(c.req.query("type")) : undefined;
+  const limit = Number(c.req.query("limit")) || 100;
+  const offset = Number(c.req.query("offset")) || 0;
+  const result = await getWxFavorites(config.dataDir, type, limit, offset);
+  return c.json(result);
 });
 
 app.get("/api/year-report", async (c) => {
