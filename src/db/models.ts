@@ -3,6 +3,7 @@ export interface Message {
   time: string;
   talker: string;
   sender: string;
+  senderAvatar?: string;
   isSelf: boolean;
   isChatRoom: boolean;
   type: number;
@@ -19,6 +20,7 @@ export interface Message {
   voiceDuration?: number;
   voiceText?: string;
   revokedOriginal?: string;
+  subMessages?: string[];
 }
 
 export interface Session {

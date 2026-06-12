@@ -4,6 +4,7 @@ import { getGlobalStats, getChatStats } from "../db/stats.js";
 import { closeAll } from "../db/manager.js";
 import { getConfig } from "../config.js";
 import { execPython } from "../python/runner.js";
+import { doRefresh } from "../server/refresh.js";
 
 export async function handleToolCall(
   name: string,
@@ -183,7 +184,8 @@ export async function handleToolCall(
           format?: string;
         };
         const messages = await getMessages(config.dataDir, talker, {
-          limit: 10000,
+          limit: 100000,
+          offset: 0,
           reverse: true,
         });
         if ((format || "json") === "json") {
@@ -198,6 +200,18 @@ export async function handleToolCall(
         });
         return {
           content: [{ type: "text", text: lines.join("\n") }],
+        };
+      }
+
+      case "refresh_data": {
+        const result = await doRefresh();
+        if (result.ok) {
+          return {
+            content: [{ type: "text", text: `刷新成功，完成时间: ${globalThis.__wechatLastRefresh}` }],
+          };
+        }
+        return {
+          content: [{ type: "text", text: `刷新失败: ${result.error}` }],
         };
       }
 

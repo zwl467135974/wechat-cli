@@ -131,11 +131,18 @@ function createMcpServer() {
         .string()
         .describe("对方的用户名/wxid"),
       format: z
-        .enum(["json", "txt"])
+        .enum(["json", "txt", "html"])
         .optional()
-        .describe("导出格式：json 或 txt（默认 json）"),
+        .describe("导出格式：json、txt 或 html（默认 json）"),
     },
     async (args) => handleToolCall("export_chat", args)
+  );
+
+  server.tool(
+    "refresh_data",
+    "重新解密微信数据库，刷新聊天数据。用于获取最新消息。",
+    {},
+    async (args) => handleToolCall("refresh_data", args)
   );
 
   return server;

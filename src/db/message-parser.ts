@@ -2,6 +2,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { decodeMessageContent } from "../db/codec.js";
 import { loadContactMap } from "../db/query-contacts.js";
+import { getConfig } from "../config.js";
 import { findRecalledMessage } from "./recall-store.js";
 import type { Message } from "../db/models.js";
 import type { Database } from "sql.js";
@@ -62,21 +63,23 @@ export async function parseMessageRow(
   }
 
   const isChatRoom = defaultTalker.endsWith("@chatroom");
+  const source = row[6];
   let sender = "";
   let isSelf = status === 2;
   let content = rawText;
 
   if (isChatRoom && rawText) {
-    const split = rawText.split(":\n", 2);
-    if (split.length === 2) {
-      sender = split[0];
-      content = split[1];
-      isSelf = false;
+    const colonIdx = rawText.indexOf(":\n");
+    if (colonIdx > 0 && colonIdx < 60) {
+      sender = rawText.substring(0, colonIdx);
+      content = rawText.substring(colonIdx + 2);
     } else if (localType !== 10000) {
-      isSelf = true;
+      if (source && typeof source === "string" && source.startsWith("wxid_")) {
+        sender = source;
+      }
     }
   } else {
-    sender = defaultTalker;
+    sender = isSelf ? "" : defaultTalker;
   }
 
   let emojiUrl: string | undefined;
@@ -134,6 +137,7 @@ export async function parseMessageRow(
     content = extractRevokeMessage(content);
   }
 
+  let subMessages: string[] | undefined;
   if (localType === 49 && content.includes("<")) {
     const appResult = extractAppMessage(content);
     content = appResult.content;
@@ -142,6 +146,7 @@ export async function parseMessageRow(
     appThumbUrl = appResult.appThumbUrl;
     referContent = appResult.referContent;
     referSender = appResult.referSender;
+    subMessages = appResult.subMessages;
   }
 
   let mediaPath: string | undefined;
@@ -200,23 +205,45 @@ export async function parseMessageRow(
     voiceDuration,
     voiceText,
     revokedOriginal,
+    subMessages,
   };
 }
 
+let selfAvatarCache: string | undefined;
+
+export function clearSelfCache() {
+  selfAvatarCache = undefined;
+}
+
+export function getSelfAvatar() { return selfAvatarCache; }
+
 export async function resolveSenderNames(dataDir: string, messages: Message[]): Promise<void> {
+  const config = getConfig();
   const wxids = new Set<string>();
   for (const m of messages) {
     if (m.sender && m.sender.startsWith("wxid_")) wxids.add(m.sender);
   }
+  if (config.selfWxid) wxids.add(config.selfWxid);
   if (wxids.size === 0) return;
 
   const map = await loadContactMap(dataDir, [...wxids]);
+  if (config.selfWxid && !selfAvatarCache) {
+    selfAvatarCache = map.get(config.selfWxid)?.smallHeadUrl;
+  }
+
   for (const m of messages) {
     if (m.sender && map.has(m.sender)) {
       const c = map.get(m.sender)!;
-      m.sender = c.remark || c.nickname || m.sender;
+      m.senderAvatar = c.smallHeadUrl || undefined;
+      if (!m.isSelf) {
+        m.sender = c.remark || c.nickname || m.sender;
+      }
+    }
+    if (m.isSelf && !m.senderAvatar && selfAvatarCache) {
+      m.senderAvatar = selfAvatarCache;
     }
   }
+  console.log(`[DEBUG] selfWxid=${config.selfWxid} selfAvatar=${!!selfAvatarCache}`);
 }
 
 export function getMediaTypeLabel(localType: number): string {
@@ -303,6 +330,7 @@ export interface AppMessageResult {
   appThumbUrl?: string;
   referContent?: string;
   referSender?: string;
+  subMessages?: string[];
 }
 
 export function extractAppMessage(raw: string): AppMessageResult {
@@ -355,6 +383,10 @@ export function extractAppMessage(raw: string): AppMessageResult {
     });
     const header = appInfoMatch[1].trim();
     result.content = `[合并转发] ${header} (${subAppmsgs.length}条)\n${items.join("\n")}`;
+    result.subMessages = subAppmsgs.map((block, i) => {
+      const tMatch = block.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
+      return `${i + 1}. ${tMatch ? tMatch[1].trim() : "..."}`;
+    });
     return result;
   }
 

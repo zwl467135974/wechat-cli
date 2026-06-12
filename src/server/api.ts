@@ -86,6 +86,7 @@ app.get("/api/status", (c) => {
     wechatPath: config.wechatPath || "not configured",
     wechatDbSrcPath: config.wechatDbSrcPath || "not configured",
     hasImageKey: !!config.imageKey,
+    selfWxid: config.selfWxid || "",
   });
 });
 
@@ -97,6 +98,7 @@ app.post("/api/save-config", async (c) => {
   if (body.wechatDbKey) mapping.WECHAT_DB_KEY = body.wechatDbKey;
   if (body.imageKey) mapping.IMAGE_KEY = body.imageKey;
   if (body.xorKey) mapping.XOR_KEY = body.xorKey;
+  if (body.selfWxid) mapping.SELF_WXID = body.selfWxid;
   saveEnvFile(mapping);
   const config = getConfig();
   if (body.wechatDbSrcPath) config.wechatDbSrcPath = body.wechatDbSrcPath;
@@ -104,6 +106,7 @@ app.post("/api/save-config", async (c) => {
   if (body.wechatDbKey) config.wechatDbKey = body.wechatDbKey;
   if (body.imageKey) config.imageKey = body.imageKey;
   if (body.xorKey) config.xorKey = body.xorKey;
+  if (body.selfWxid) config.selfWxid = body.selfWxid;
   return c.json({ success: true });
 });
 
@@ -257,7 +260,8 @@ app.get("/api/export", async (c) => {
   }
 
   const messages = await getMessages(config.dataDir, talker, {
-    limit: 10000,
+    limit: 100000,
+    offset: 0,
     reverse: true,
   });
 

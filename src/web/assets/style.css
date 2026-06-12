@@ -501,17 +501,56 @@ body {
 
 .message-row {
   display: flex;
-  flex-direction: column;
-  max-width: 70%;
+  flex-direction: row;
+  max-width: 80%;
+  gap: 8px;
 }
 
 .message-row.self {
   align-self: flex-end;
-  align-items: flex-end;
+  flex-direction: row-reverse;
 }
 
 .message-row.other {
   align-self: flex-start;
+}
+
+.msg-avatar-wrap {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.msg-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.msg-avatar-fallback {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.msg-body {
+  display: flex;
+  flex-direction: column;
+  max-width: calc(100% - 44px);
+}
+
+.message-row.self .msg-body {
+  align-items: flex-end;
+}
+
+.message-row.other .msg-body {
   align-items: flex-start;
 }
 
@@ -1044,6 +1083,40 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 280px;
+}
+
+.merged-msgs {
+  margin-top: 6px;
+  border-left: 3px solid var(--border);
+  padding-left: 8px;
+}
+
+.merged-msgs.collapsed .merged-item:nth-child(n+6) {
+  display: none;
+}
+
+.merged-item {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+
+.merged-toggle {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 0;
+  margin-top: 2px;
+}
+
+.merged-toggle:hover {
+  text-decoration: underline;
 }
 
 .location-bubble {

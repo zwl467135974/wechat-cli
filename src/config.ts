@@ -10,6 +10,7 @@ export interface AppConfig {
   imageKey: string;
   xorKey: string;
   pythonPath: string;
+  selfWxid: string;
 }
 
 const DEFAULT_CONFIG: Partial<AppConfig> = {
@@ -69,6 +70,7 @@ export function initConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     wechatDataPath: envFile.WECHAT_DATA_PATH || "",
     imageKey: envFile.IMAGE_KEY || "",
     xorKey: envFile.XOR_KEY || "",
+    selfWxid: envFile.SELF_WXID || "",
     ...envOverrides,
   } as AppConfig;
 

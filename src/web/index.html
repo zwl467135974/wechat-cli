@@ -45,6 +45,7 @@ let state = {
   contactOffset: 0,
   searchOffset: 0,
   loading: false,
+  selfWxid: '',
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -64,6 +65,13 @@ function showToast(msg, type = 'success') {
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 3000);
 }
+
+window.toggleMerged = function(btn) {
+  const container = btn.parentElement;
+  const collapsed = container.classList.contains('collapsed');
+  container.classList.toggle('collapsed');
+  btn.textContent = collapsed ? '收起' : (container.querySelectorAll('.merged-item').length > 10 ? '展开全部 ' + container.querySelectorAll('.merged-item').length + ' 条' : '展开');
+};
 
 function escapeHtml(s) {
   const d = document.createElement('div');
@@ -131,7 +139,11 @@ function renderMessageContent(msg) {
     return `<div class="message-system"><span class="message-bubble">${escapeHtml(recallText)}${original}</span></div>`;
   }
   const side = msg.isSelf ? 'self' : 'other';
-  const sender = (!msg.isSelf && msg.isChatRoom) ? `<div class="message-sender">${escapeHtml(msg.sender || '')}</div>` : '';
+  const senderName = (!msg.isSelf && msg.isChatRoom) ? `<div class="message-sender">${escapeHtml(msg.sender || '')}</div>` : '';
+  const avatarHtml = msg.senderAvatar
+    ? `<img class="msg-avatar" src="${msg.senderAvatar}" alt="" loading="lazy" onerror="this.outerHTML='<div class=\\'msg-avatar-fallback\\'>${msg.isSelf ? '我' : getInitial(msg.sender || '')}</div>'">`
+    : `<div class="msg-avatar-fallback">${msg.isSelf ? '我' : getInitial(msg.sender || msg.talker || '')}</div>`;
+  const avatar = `<div class="msg-avatar-wrap">${avatarHtml}</div>`;
 
   let bubble = '';
   if (msg.type === 3) {
@@ -179,12 +191,14 @@ function renderMessageContent(msg) {
     const desc = lines.slice(1).join('\n');
     const isReply = msg.appType === 57 && msg.referContent;
     const isFile = msg.appType === 6 && msg.mediaPath;
+    const isMerged = msg.subMessages && msg.subMessages.length > 0;
     const fileLink = isFile ? `<a href="${API}/api/file?path=${encodeURIComponent(msg.mediaPath)}" target="_blank" class="file-link">[文件] ${escapeHtml(title)}</a>` : '';
     const link = isFile ? fileLink : (msg.appUrl && msg.appType !== 57 ? `<a class="app-link" href="${escapeHtml(msg.appUrl)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : `<span>${escapeHtml(title)}</span>`);
     const thumb = msg.appThumbUrl ? `<img class="app-thumb" src="${msg.appThumbUrl}" loading="lazy" onerror="this.remove()">` : '';
     const refHtml = isReply ? `<div class="refer-block">▎${escapeHtml(msg.referSender || '')}: ${escapeHtml((msg.referContent || '').substring(0, 100))}</div>` : '';
-    const descHtml = desc && !isReply && !isFile ? `<div class="app-desc">${escapeHtml(desc.substring(0, 200))}${desc.length > 200 ? '...' : ''}</div>` : '';
-    bubble = `<div class="message-bubble app-bubble">${thumb}${refHtml}<div class="app-title">${link}</div>${descHtml}</div>`;
+    const mergedHtml = isMerged ? `<div class="merged-msgs collapsed" data-seq="${msg.seq}">${msg.subMessages.map(s => `<div class="merged-item">${escapeHtml(s)}</div>`).join('')}<button class="merged-toggle" onclick="toggleMerged(this)">${msg.subMessages.length > 10 ? '展开全部 ' + msg.subMessages.length + ' 条' : '展开'}</button></div>` : '';
+    const descHtml = !isMerged && desc && !isReply && !isFile ? `<div class="app-desc">${escapeHtml(desc.substring(0, 200))}${desc.length > 200 ? '...' : ''}</div>` : '';
+    bubble = `<div class="message-bubble app-bubble">${thumb}${refHtml}<div class="app-title">${link}</div>${descHtml}${mergedHtml}</div>`;
   } else {
     const tag = getTypeTag(msg.type);
     bubble = `<div class="message-bubble">${escapeHtml(msg.content)}${tag}</div>`;
@@ -192,9 +206,11 @@ function renderMessageContent(msg) {
 
   return `
     <div class="message-row ${side}" data-raw-content="${escapeHtml(msg.content)}" oncontextmenu="showMsgMenu(event, this)">
-      ${sender}
+      ${avatar}
+      <div class="msg-body">${senderName}
       ${bubble}
       <div class="message-time">${formatTime(msg.time)}</div>
+      </div>
     </div>`;
 }
 
@@ -231,6 +247,7 @@ async function checkStatus() {
     const refreshInfo = await api('/api/last-refresh');
     const refreshText = refreshInfo.lastRefresh ? ` | 更新: ${new Date(refreshInfo.lastRefresh).toLocaleTimeString('zh-CN')}` : '';
     $('#statusText').textContent = `${s.dbCount} 个数据库${refreshText}`;
+    if (s.selfWxid) state.selfWxid = s.selfWxid;
     if (s.hasData && s.dbCount === 0) {
       $('#statusText').textContent = '暂无数据 - 请先设置';
       $('#statusDot').className = 'status-dot disconnected';
@@ -365,8 +382,11 @@ function renderChatPage() {
           </div>` : ''}
         </div>
         <div style="display:flex;flex:1;overflow:hidden;flex-direction:column">
-          ${state.currentSession ? `<div style="display:flex;padding:8px 16px;border-bottom:1px solid var(--border);gap:8px">
-            <input class="search-box" placeholder="搜索当前会话..." id="chatSearch" style="flex:1;padding:6px 10px;font-size:13px" value="${escapeHtml($('#chatSearch')?.value || '')}">
+          ${state.currentSession ? `<div style="display:flex;padding:8px 16px;border-bottom:1px solid var(--border);gap:8px;align-items:center;flex-wrap:wrap">
+            <input class="search-box" placeholder="搜索当前会话..." id="chatSearch" style="flex:1;min-width:120px;padding:6px 10px;font-size:13px" value="${escapeHtml($('#chatSearch')?.value || '')}">
+            <input type="date" id="dateFrom" style="padding:4px 6px;font-size:12px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius)" value="${$('#dateFrom')?.value || ''}" title="开始日期">
+            <span style="color:var(--text-muted);font-size:12px">~</span>
+            <input type="date" id="dateTo" style="padding:4px 6px;font-size:12px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius)" value="${$('#dateTo')?.value || ''}" title="结束日期">
             <button class="btn btn-secondary btn-sm" onclick="searchInChat()">搜索</button>
             <button class="btn btn-secondary btn-sm" id="chatSearchClear" style="display:none" onclick="clearChatSearch()">清除</button>
           </div>` : ''}
@@ -665,9 +685,22 @@ function renderChatStatsPanel(panel, s) {
     </div>`;
 }
 
+function buildMessageQuery(talkerId, extra = {}) {
+  const params = new URLSearchParams({ talker_id: talkerId, limit: String(extra.limit || 50), offset: String(extra.offset || 0), reverse: 'true' });
+  if (extra.keyword) params.set('keyword', extra.keyword);
+  const dateFrom = extra.dateFrom || $('#dateFrom')?.value;
+  const dateTo = extra.dateTo || $('#dateTo')?.value;
+  if (dateFrom) params.set('start_time', String(Math.floor(new Date(dateFrom).getTime() / 1000)));
+  if (dateTo) params.set('end_time', String(Math.floor(new Date(dateTo + 'T23:59:59').getTime() / 1000)));
+  return `/api/messages?${params}`;
+}
+
 window.searchInChat = async function() {
   const keyword = $('#chatSearch')?.value?.trim();
-  if (!keyword || !state.currentSession) return;
+  const dateFrom = $('#dateFrom')?.value;
+  const dateTo = $('#dateTo')?.value;
+  if (!keyword && !dateFrom && !dateTo) return;
+  if (!state.currentSession) return;
   const clearBtn = $('#chatSearchClear');
   if (clearBtn) clearBtn.style.display = 'inline-flex';
   state.messages = [];
@@ -675,7 +708,7 @@ window.searchInChat = async function() {
   state.allLoaded = false;
   window._preservingScroll = true;
   try {
-    state.messages = await api(`/api/messages?talker_id=${encodeURIComponent(state.currentSession)}&keyword=${encodeURIComponent(keyword)}&limit=200&reverse=true`);
+    state.messages = await api(buildMessageQuery(state.currentSession, { keyword, limit: 200 }));
   } catch { state.messages = []; }
   renderChatPage();
 };
@@ -683,6 +716,10 @@ window.searchInChat = async function() {
 window.clearChatSearch = async function() {
   const input = $('#chatSearch');
   if (input) input.value = '';
+  const df = $('#dateFrom');
+  if (df) df.value = '';
+  const dt = $('#dateTo');
+  if (dt) dt.value = '';
   const clearBtn = $('#chatSearchClear');
   if (clearBtn) clearBtn.style.display = 'none';
   state.messages = [];
@@ -1141,6 +1178,7 @@ async function loadAndRenderStats() {
 }
 
 function renderSetupPage() {
+  const selfWxid = state.selfWxid || '';
   mainContent().innerHTML = `
     <div class="page-container">
       <div class="setup-wizard">
@@ -1175,6 +1213,18 @@ function renderSetupPage() {
           <p style="color:var(--text-secondary);margin-bottom:12px">如需查看图片，需先扫描微信进程内存获取图片解密密钥。请确保微信正在运行且已查看过部分图片。</p>
           <button class="btn btn-primary" onclick="doScanImageKey(this)">扫描图片密钥</button>
           <div id="imageKeyResult" class="log-output" style="margin-top:12px;display:none"></div>
+        </div>
+
+        <div class="setup-step">
+          <h3><span class="step-number">2.7</span> 设置自己的头像</h3>
+          <p style="color:var(--text-secondary);margin-bottom:12px">选择你自己的微信号，用于在聊天中正确显示头像。</p>
+          <div class="input-group">
+            <label>你的微信 wxid</label>
+            <input class="input-field" id="setupSelfWxid" placeholder="wxid_xxxxxxxxxxxxxxxx" value="${escapeHtml(selfWxid)}">
+            <p style="color:var(--text-muted);font-size:12px;margin-top:4px">可在通讯录页搜索自己的昵称找到 wxid</p>
+          </div>
+          <button class="btn btn-primary" onclick="doSaveSelfWxid(this)">保存</button>
+          <div id="selfWxidResult" class="log-output" style="margin-top:12px;display:none"></div>
         </div>
 
         <div class="setup-step">
@@ -1244,6 +1294,31 @@ window.doDecrypt = async function(btn) {
     await checkStatus();
   } catch (e) {
     el.textContent = '错误: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
+  }
+};
+
+window.doSaveSelfWxid = async function(btn) {
+  const wxid = $('#setupSelfWxid')?.value?.trim();
+  if (!wxid) { showToast('请输入 wxid', 'error'); return; }
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '保存中...';
+  try {
+    await api('/api/save-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selfWxid: wxid }),
+    });
+    state.selfWxid = wxid;
+    const el = $('#selfWxidResult');
+    el.style.display = 'block';
+    el.textContent = '保存成功！刷新聊天页面即可看到自己的头像。';
+    showToast('保存成功');
+  } catch (e) {
+    showToast('保存失败: ' + e.message, 'error');
   } finally {
     btn.disabled = false;
     btn.textContent = origText;

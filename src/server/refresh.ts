@@ -3,6 +3,7 @@ import path from "node:path";
 import { getConfig } from "../config.js";
 import { closeAll } from "../db/manager.js";
 import { clearShardCache } from "../db/query-messages.js";
+import { clearSelfCache } from "../db/message-parser.js";
 import { saveAllBeforeRefresh } from "../db/recall-store.js";
 import { execPython } from "../python/runner.js";
 
@@ -26,6 +27,7 @@ export async function doRefresh(): Promise<{ ok: boolean; error?: string }> {
     saveAllBeforeRefresh(cfg.dataDir);
     closeAll();
     clearShardCache();
+    clearSelfCache();
     if (!cfg.wechatDbSrcPath) return { ok: false, error: "未配置微信数据库路径" };
     const absOutDir = path.resolve(cfg.dataDir);
     if (!fs.existsSync(absOutDir)) fs.mkdirSync(absOutDir, { recursive: true });
