@@ -18,6 +18,8 @@
       <button class="nav-btn" data-page="dashboard">统计</button>
       <button class="nav-btn" data-page="report">年度报告</button>
       <button class="nav-btn" data-page="bookmarks">收藏</button>
+      <button class="nav-btn" data-page="emojis">表情</button>
+      <button class="nav-btn" data-page="files">文件</button>
       <button class="nav-btn" data-page="setup">设置</button>
     </nav>
     <div class="header-actions">
@@ -46,6 +48,7 @@ let state = {
   allLoaded: false,
   contactOffset: 0,
   searchOffset: 0,
+  searchGrouped: false,
   loading: false,
   selfWxid: '',
   aiEnabled: false,
@@ -253,7 +256,7 @@ function renderMessageContent(msg) {
     const fileLink = isFile ? `<a href="${API}/api/file?path=${encodeURIComponent(msg.mediaPath)}" target="_blank" class="file-link">[文件] ${escapeHtml(title)}</a>` : '';
     const link = isFile ? fileLink : (msg.appUrl && msg.appType !== 57 ? `<a class="app-link" href="${escapeHtml(msg.appUrl)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : `<span>${escapeHtml(title)}</span>`);
     const thumb = msg.appThumbUrl ? `<img class="app-thumb" src="${msg.appThumbUrl}" loading="lazy" onerror="this.remove()">` : '';
-    const refHtml = isReply ? `<div class="refer-block">▎${escapeHtml(msg.referSender || '')}: ${escapeHtml((msg.referContent || '').substring(0, 100))}</div>` : '';
+    const refHtml = isReply ? `<div class="refer-block" onclick="scrollToMsg('${msg.talker}',${msg.seq})">▎${escapeHtml(msg.referSender || '')}: ${escapeHtml((msg.referContent || '').substring(0, 100))}</div>` : '';
     const mergedHtml = isMerged ? `<div class="merged-msgs collapsed" data-seq="${msg.seq}">${msg.subMessages.map(s => `<div class="merged-item">${escapeHtml(s)}</div>`).join('')}<div style="display:flex;gap:4px;margin-top:4px"><button class="merged-toggle" onclick="toggleMerged(this)">${msg.subMessages.length > 10 ? '展开全部 ' + msg.subMessages.length + ' 条' : '展开'}</button><button class="merged-toggle" onclick="showMergedPopup(this)">弹窗查看</button></div></div>` : '';
     const descHtml = !isMerged && desc && !isReply && !isFile ? `<div class="app-desc">${escapeHtml(desc.substring(0, 200))}${desc.length > 200 ? '...' : ''}</div>` : '';
     bubble = `<div class="message-bubble app-bubble">${thumb}${refHtml}<div class="app-title">${link}</div>${descHtml}${mergedHtml}</div>`;
@@ -263,7 +266,7 @@ function renderMessageContent(msg) {
   }
 
   return `
-    <div class="message-row ${side}" data-raw-content="${escapeHtml(msg.content)}" data-seq="${msg.seq}" data-talker="${escapeHtml(msg.talker)}" data-time="${escapeHtml(msg.time)}" data-sender="${escapeHtml(msg.sender)}" oncontextmenu="showMsgMenu(event, this)">
+    <div class="message-row ${side}" id="msg-${msg.seq}" data-raw-content="${escapeHtml(msg.content)}" data-seq="${msg.seq}" data-talker="${escapeHtml(msg.talker)}" data-time="${escapeHtml(msg.time)}" data-sender="${escapeHtml(msg.sender)}" oncontextmenu="showMsgMenu(event, this)">
       ${avatar}
       <div class="msg-body">${senderName}
       ${bubble}
@@ -915,6 +918,18 @@ document.addEventListener('click', function(e) {
   }
 });
 
+window.scrollToMsg = function(talker, seq) {
+  const el = document.getElementById('msg-' + seq);
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.remove('highlight');
+    void el.offsetWidth;
+    el.classList.add('highlight');
+    return;
+  }
+  showToast('被引用消息不在当前视图中');
+};
+
 window.showContactDetail = async function(username) {
   if (!username) return;
   const overlay = document.createElement('div');
@@ -1011,19 +1026,31 @@ window.nextContacts = () => loadContacts($('#contactSearch')?.value, state.conta
 window.prevContacts = () => loadContacts($('#contactSearch')?.value, Math.max(0, state.contactOffset - 60));
 
 function renderSearchPage() {
-  const results = state.searchResults.map(r => {
+  const grouped = new Map();
+  for (const r of state.searchResults) {
     const session = state.sessions.find(s => s.username === r.talker);
     const talkerName = session ? (session.remark || session.nickname || session.alias || r.talker) : r.talker;
-    const highlighted = r.content ? escapeHtml(r.content).replace(
-      new RegExp(escapeRegex(escapeHtml(state.searchKeyword || '')), 'gi'),
-      match => `<mark>${match}</mark>`
-    ) : '';
-    return `
-      <div class="search-result-item" data-talker="${escapeHtml(r.talker)}">
-        <div class="search-result-talk">${escapeHtml(talkerName)} ${getTypeTag(r.type)}</div>
+    if (!grouped.has(r.talker)) grouped.set(r.talker, { name: talkerName, items: [] });
+    grouped.get(r.talker).items.push(r);
+  }
+
+  const groupedHtml = [...grouped.entries()].map(([talker, group]) => {
+    const itemsHtml = group.items.map(r => {
+      const highlighted = r.content ? escapeHtml(r.content).replace(
+        new RegExp(escapeRegex(escapeHtml(state.searchKeyword || '')), 'gi'),
+        match => `<mark>${match}</mark>`
+      ) : '';
+      return `<div class="search-result-item" data-talker="${escapeHtml(r.talker)}">
         <div class="search-result-content">${highlighted}</div>
-        <div class="search-result-time">${formatDate(r.time)}</div>
+        <div class="search-result-time">${formatDate(r.time)} ${getTypeTag(r.type)}</div>
       </div>`;
+    }).join('');
+    return `<div style="margin-bottom:16px">
+      <div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:6px;padding-left:4px">
+        ${escapeHtml(group.name)} <span style="font-weight:400">(${group.items.length}条)</span>
+      </div>
+      ${itemsHtml}
+    </div>`;
   }).join('');
 
   mainContent().innerHTML = `
@@ -1033,7 +1060,36 @@ function renderSearchPage() {
         <input class="search-input" placeholder="搜索所有聊天记录..." id="globalSearch" value="${escapeHtml(state.searchKeyword || '')}">
         <button class="btn btn-primary" onclick="doSearch()">搜索</button>
       </div>
-      <div id="searchResults">${results || '<div class="empty-state"><div class="empty-state-icon">🔍</div><div>输入关键词搜索所有聊天记录</div></div>'}</div>
+      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+        <select id="searchType" style="padding:4px 8px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-primary);font-size:13px">
+          <option value="">全部类型</option>
+          <option value="1">文本</option>
+          <option value="3">图片</option>
+          <option value="34">语音</option>
+          <option value="43">视频</option>
+          <option value="47">表情</option>
+          <option value="49">应用/链接/文件</option>
+        </select>
+        <label style="font-size:13px;color:var(--text-secondary);display:flex;align-items:center;gap:4px">
+          <input type="checkbox" id="searchRegex" style="accent-color:var(--accent)"> 正则
+        </label>
+        <label style="font-size:13px;color:var(--text-secondary);display:flex;align-items:center;gap:4px">
+          <input type="checkbox" id="searchGroup" ${state.searchGrouped ? 'checked' : ''} style="accent-color:var(--accent)"> 按会话分组
+        </label>
+      </div>
+      <div id="searchResults">${state.searchGrouped ? groupedHtml : (state.searchResults.map(r => {
+        const session = state.sessions.find(s => s.username === r.talker);
+        const talkerName = session ? (session.remark || session.nickname || session.alias || r.talker) : r.talker;
+        const highlighted = r.content ? escapeHtml(r.content).replace(
+          new RegExp(escapeRegex(escapeHtml(state.searchKeyword || '')), 'gi'),
+          match => `<mark>${match}</mark>`
+        ) : '';
+        return `<div class="search-result-item" data-talker="${escapeHtml(r.talker)}">
+          <div class="search-result-talk">${escapeHtml(talkerName)} ${getTypeTag(r.type)}</div>
+          <div class="search-result-content">${highlighted}</div>
+          <div class="search-result-time">${formatDate(r.time)}</div>
+        </div>`;
+      }).join('')) || '<div class="empty-state"><div class="empty-state-icon">🔍</div><div>输入关键词搜索所有聊天记录</div></div>'}</div>
       ${state.searchResults.length > 0 ? `
         <div class="pagination">
           <span class="pagination-info">${state.searchOffset} - ${state.searchOffset + state.searchResults.length}</span>
@@ -1055,8 +1111,14 @@ async function doSearch(keyword, offset = 0) {
   const kw = keyword || $('#globalSearch')?.value;
   if (!kw) return;
   state.searchKeyword = kw;
+  state.searchGrouped = $('#searchGroup')?.checked || false;
   try {
-    state.searchResults = await api(`/api/search?keyword=${encodeURIComponent(kw)}&limit=50&offset=${offset}`);
+    const msgType = $('#searchType')?.value || '';
+    const useRegex = $('#searchRegex')?.checked || false;
+    let url = `/api/search?keyword=${encodeURIComponent(kw)}&limit=50&offset=${offset}`;
+    if (msgType) url += `&msgType=${msgType}`;
+    if (useRegex) url += `&regex=true`;
+    state.searchResults = await api(url);
     state.searchOffset = offset;
   } catch (e) {
     showToast('搜索失败: ' + e.message, 'error');
@@ -1283,7 +1345,45 @@ async function loadAndRenderStats() {
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px">
         ${funHtml}
       </div>
+    </div>
+
+    <div class="stats-card stats-animate" style="margin-bottom:24px">
+      <div class="stats-section-title">📉 关键词趋势</div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <input class="search-input" id="trendKeyword" placeholder="输入关键词，如：工作、加班、开心" style="flex:1">
+        <button class="btn btn-primary btn-sm" onclick="loadKeywordTrend()">查看趋势</button>
+      </div>
+      <div id="keywordTrendChart"></div>
     </div>`;
+
+window.loadKeywordTrend = async function() {
+  const kw = $('#trendKeyword')?.value?.trim();
+  if (!kw) { showToast('请输入关键词', 'error'); return; }
+  const container = $('#keywordTrendChart');
+  container.innerHTML = '<div class="loading-spinner" style="margin:20px auto"></div>';
+  try {
+    const data = await api(`/api/keyword-trend?keyword=${encodeURIComponent(kw)}`);
+    if (!data.length) {
+      container.innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:20px">未找到相关消息</div>';
+      return;
+    }
+    const maxCount = Math.max(...data.map(d => d.count), 1);
+    const bars = data.map(d => {
+      const pct = (d.count / maxCount) * 100;
+      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <span style="font-size:11px;color:var(--text-secondary);width:56px;text-align:right;flex-shrink:0">${d.month}</span>
+        <div style="flex:1;background:var(--bg-tertiary);border-radius:4px;height:20px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--accent),var(--purple));border-radius:4px;transition:width 0.5s ease"></div>
+        </div>
+        <span style="font-size:11px;color:var(--text-secondary);width:40px">${d.count}</span>
+      </div>`;
+    }).join('');
+    const total = data.reduce((s, d) => s + d.count, 0);
+    container.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">"${escapeHtml(kw)}" 共出现 ${total} 次，跨越 ${data.length} 个月</div>${bars}`;
+  } catch (e) {
+    container.innerHTML = `<div style="color:var(--text-secondary);text-align:center;padding:20px">查询失败: ${escapeHtml(e.message)}</div>`;
+  }
+};
 
   statsStagger();
 
@@ -1426,6 +1526,130 @@ function renderYearReportContent(r) {
       </div>
     </div>`;
 }
+
+let mediaTypeFilter = 'all';
+
+async function renderFilesPage() {
+  const main = $('#mainContent');
+  main.innerHTML = `<div class="page-container"><h1 class="page-title">文件管理</h1>
+    <div class="fav-filter-bar" id="mediaFilter"></div>
+    <div id="mediaList"><div class="loading-spinner" style="margin:40px auto"></div></div>
+  </div>`;
+
+  const filters = [
+    { value: 'all', label: '全部' },
+    { value: 'image', label: '图片' },
+    { value: 'video', label: '视频' },
+    { value: 'file', label: '文件' },
+  ];
+  $('#mediaFilter').innerHTML = filters.map(f =>
+    `<button class="fav-filter-btn ${mediaTypeFilter === f.value ? 'active' : ''}" onclick="mediaTypeFilter='${f.value}';renderFilesPage()">${f.label}</button>`
+  ).join('');
+
+  try {
+    const result = await api(`/api/media?type=${mediaTypeFilter}&limit=200`);
+    const list = $('#mediaList');
+    if (!result.items.length) {
+      list.innerHTML = '<div class="fav-empty"><div class="fav-empty-icon">📁</div>暂无文件</div>';
+      return;
+    }
+
+    const countLabel = `${result.total} 个${mediaTypeFilter === 'all' ? '媒体' : mediaTypeFilter === 'image' ? '图片' : mediaTypeFilter === 'video' ? '视频' : '文件'}`;
+    list.innerHTML = `<div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">共 ${countLabel}</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+    ${result.items.map(f => {
+      const timeStr = new Date(f.time).toLocaleString('zh-CN');
+      const badgeClass = f.type === 'image' ? 'fav-type-badge-image' : f.type === 'video' ? 'fav-type-badge-video' : 'fav-type-badge-file';
+      const typeLabel = f.type === 'image' ? '图片' : f.type === 'video' ? '视频' : '文件';
+      let preview = '';
+      if (f.type === 'image' && f.mediaPath) {
+        preview = `<img src="${API}/api/image?path=${encodeURIComponent(f.mediaPath)}&_t=1" style="max-width:60px;max-height:60px;border-radius:6px;object-fit:cover" loading="lazy" onerror="this.remove()">`;
+      } else if (f.type === 'video' && f.mediaPath) {
+        preview = `<video src="${API}/api/video?path=${encodeURIComponent(f.mediaPath)}" style="max-width:60px;max-height:60px;border-radius:6px;object-fit:cover" preload="metadata"></video>`;
+      } else {
+        preview = `<div style="width:60px;height:60px;background:var(--bg-tertiary);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:24px">📄</div>`;
+      }
+      let actionHtml = '';
+      if (f.type === 'file' && f.mediaPath) {
+        actionHtml = `<a href="${API}/api/file?path=${encodeURIComponent(f.mediaPath)}" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration:none">下载</a>`;
+      } else if (f.type === 'video' && f.mediaPath) {
+        actionHtml = `<a href="${API}/api/video?path=${encodeURIComponent(f.mediaPath)}" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration:none">播放</a>`;
+      }
+      return `<div class="fav-card fav-card-clickable" data-talker="${escapeHtml(f.talker)}">
+        ${preview}
+        <div style="flex:1;min-width:0">
+          <div class="fav-meta">
+            <span class="fav-type-badge ${badgeClass}">${typeLabel}</span>
+            <span class="fav-meta-item">${timeStr}</span>
+            <span class="fav-meta-item">${escapeHtml(f.talkerName || f.talker)}</span>
+          </div>
+          <div class="fav-content">${escapeHtml(f.type === 'file' ? f.fileName : f.content).substring(0, 120)}</div>
+        </div>
+        <div class="fav-actions">${actionHtml}</div>
+      </div>`;
+    }).join('')}
+    </div>`;
+
+    list.querySelectorAll('.fav-card-clickable').forEach(el => {
+      el.onclick = () => {
+        state.page = 'chat';
+        updateNav();
+        selectSession(el.getAttribute('data-talker') || '');
+      };
+    });
+  } catch (e) {
+    $('#mediaList').innerHTML = `<div class="fav-empty">加载失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function renderEmojiPage() {
+  const main = $('#mainContent');
+  main.innerHTML = `<div class="page-container"><h1 class="page-title">表情包</h1><div id="emojiGrid"><div class="loading-spinner" style="margin:40px auto"></div></div></div>`;
+  try {
+    const result = await api('/api/emojis?limit=500');
+    const grid = $('#emojiGrid');
+    if (!result.items.length) {
+      grid.innerHTML = '<div class="fav-empty"><div class="fav-empty-icon">😊</div>暂无表情包</div>';
+      return;
+    }
+    grid.innerHTML = `<div style="margin-bottom:12px;font-size:13px;color:var(--text-secondary)">共 ${result.total} 个表情，按使用频率排序</div>
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:8px">
+      ${result.items.map(e => {
+        const imgSrc = e.source === 'local' ? `/api/emoji?md5=${e.md5}` : e.url;
+        const fallback = e.source === 'local'
+          ? `onerror="this.outerHTML='<div style=\\'width:80px;height:80px;background:var(--bg-hover);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:24px\\'>😊</div>'"`
+          : `onerror="this.src='/api/emoji?md5=${e.md5}'"`;
+        return `<div class="emoji-cell" title="使用 ${e.count} 次" onclick="showEmojiDetail(this)" data-url="${escapeHtml(imgSrc)}" data-count="${e.count}" data-talk="${escapeHtml(e.talker)}" data-time="${e.createTime}" data-source="${e.source}">
+          <img src="${escapeHtml(imgSrc)}" ${fallback} loading="lazy" style="width:80px;height:80px;object-fit:contain;border-radius:8px;cursor:pointer;background:var(--bg-hover)">
+        </div>`;
+      }).join('')}
+    </div>`;
+  } catch (e) {
+    $('#emojiGrid').innerHTML = `<div class="fav-empty">加载失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+window.showEmojiDetail = function(el) {
+  const url = el.dataset.url;
+  const count = el.dataset.count;
+  const talker = el.dataset.talk;
+  const time = el.dataset.time;
+  const source = el.dataset.source;
+  const sourceLabel = source === 'cdn' ? 'CDN' : source === 'thumb' ? '缩略图' : '本地';
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<div class="stats-card" style="width:360px;padding:24px;text-align:center">
+    <img src="${escapeHtml(url)}" style="max-width:240px;max-height:240px;object-fit:contain;border-radius:12px" onerror="this.outerHTML='<div style=\\'padding:40px;color:var(--text-secondary)\\'>图片加载失败</div>'">
+    <div style="margin-top:16px;font-size:13px;color:var(--text-secondary)">
+      <div>使用 <strong style="color:var(--text-primary)">${count}</strong> 次</div>
+      <div style="margin-top:4px">来源: ${sourceLabel}</div>
+      ${time ? `<div style="margin-top:4px">最近使用: ${new Date(Number(time)).toLocaleString('zh-CN')}</div>` : ''}
+    </div>
+    <button class="btn btn-secondary" style="width:100%;margin-top:16px" onclick="this.closest('div[style]').remove()">关闭</button>
+  </div>`;
+  document.body.appendChild(overlay);
+};
 
 let bookmarkTab = 'manual';
 let wxFavFilter = 0;
@@ -1935,6 +2159,12 @@ function renderPage() {
       break;
     case 'bookmarks':
       renderBookmarksPage();
+      break;
+    case 'emojis':
+      renderEmojiPage();
+      break;
+    case 'files':
+      renderFilesPage();
       break;
     case 'setup':
       renderSetupPage();

@@ -7,7 +7,7 @@ import {
   searchMessages,
   clearShardCache,
 } from "../db/query-messages.js";
-import { getGlobalStats, getChatStats } from "../db/stats.js";
+import { getGlobalStats, getChatStats, getKeywordTrend } from "../db/stats.js";
 import { closeAll, findFilesByType } from "../db/manager.js";
 import { execPython } from "../python/runner.js";
 import { getConfig, saveEnvFile } from "../config.js";
@@ -25,6 +25,8 @@ import { doRefresh } from "./refresh.js";
 import { callAi, isAiEnabled } from "./ai.js";
 import { addBookmark, removeBookmark, getBookmarks, isBookmarked } from "../db/bookmark-store.js";
 import { getWxFavorites, getFavoriteTypeLabel } from "../db/query-favorites.js";
+import { getEmojis } from "../db/query-emoji.js";
+import { getMediaFiles } from "../db/query-media.js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -253,15 +255,19 @@ app.get("/api/chat-stats", async (c) => {
 
 app.get("/api/search", async (c) => {
   const config = getConfig();
-  const keyword = c.req.query("keyword");
+  const keyword = c.req.query("keyword") || "";
   const limit = Number(c.req.query("limit")) || 50;
   const offset = Number(c.req.query("offset")) || 0;
+  const filters = {
+    talker: c.req.query("talker") || undefined,
+    sender: c.req.query("sender") || undefined,
+    msgType: c.req.query("msgType") ? Number(c.req.query("msgType")) : undefined,
+    startTime: c.req.query("startTime") ? Number(c.req.query("startTime")) : undefined,
+    endTime: c.req.query("endTime") ? Number(c.req.query("endTime")) : undefined,
+    useRegex: c.req.query("regex") === "true",
+  };
 
-  if (!keyword) {
-    return c.json({ error: "keyword is required" }, 400);
-  }
-
-  const results = await searchMessages(config.dataDir, keyword, limit, offset);
+  const results = await searchMessages(config.dataDir, keyword, limit, offset, filters);
   return c.json(results);
 });
 
@@ -277,6 +283,18 @@ app.get("/api/stats", async (c) => {
     const stats = await getGlobalStats(config.dataDir);
     statsCache = { data: stats, ts: Date.now() };
     return c.json(stats);
+  } catch (e: unknown) {
+    return c.json({ error: (e as Error).message }, 500);
+  }
+});
+
+app.get("/api/keyword-trend", async (c) => {
+  const keyword = c.req.query("keyword");
+  if (!keyword) return c.json({ error: "keyword required" }, 400);
+  const config = getConfig();
+  try {
+    const trend = await getKeywordTrend(config.dataDir, keyword);
+    return c.json(trend);
   } catch (e: unknown) {
     return c.json({ error: (e as Error).message }, 500);
   }
@@ -613,6 +631,30 @@ app.get("/api/wx-favorites", async (c) => {
   const limit = Number(c.req.query("limit")) || 100;
   const offset = Number(c.req.query("offset")) || 0;
   const result = await getWxFavorites(config.dataDir, type, limit, offset);
+  return c.json(result);
+});
+
+app.get("/api/emojis", async (c) => {
+  const config = getConfig();
+  const limit = Number(c.req.query("limit")) || 200;
+  const offset = Number(c.req.query("offset")) || 0;
+  const result = await getEmojis(config.dataDir, limit, offset);
+  return c.json(result);
+});
+
+app.get("/api/media", async (c) => {
+  const config = getConfig();
+  const type = (c.req.query("type") || "all") as "image" | "video" | "file" | "all";
+  const limit = Number(c.req.query("limit")) || 100;
+  const offset = Number(c.req.query("offset")) || 0;
+  const result = await getMediaFiles(config.dataDir, type, limit, offset);
+
+  const sessions = await getSessions(config.dataDir);
+  const contactMap = new Map(sessions.map(s => [s.username, s.remark || s.nickname || s.alias || ""]));
+  for (const item of result.items) {
+    item.talkerName = contactMap.get(item.talker) || item.talker;
+  }
+
   return c.json(result);
 });
 

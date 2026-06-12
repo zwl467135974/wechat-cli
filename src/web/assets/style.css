@@ -975,6 +975,17 @@ body {
   opacity: 0.7;
 }
 
+.emoji-cell {
+  transition: transform 0.15s;
+  border-radius: 8px;
+}
+
+.emoji-cell:hover {
+  transform: scale(1.15);
+  z-index: 1;
+  position: relative;
+}
+
 .search-input {
   flex: 1;
   min-width: 200px;
@@ -1225,7 +1236,7 @@ body {
 
 .refer-block {
   background: var(--bg-tertiary);
-  border-left: 3px solid var(--text-muted);
+  border-left: 3px solid var(--accent);
   padding: 4px 8px;
   margin-bottom: 6px;
   border-radius: 0 var(--radius) var(--radius) 0;
@@ -1235,6 +1246,21 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 280px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.refer-block:hover {
+  background: var(--bg-hover);
+}
+
+.message-row.highlight {
+  animation: msgHighlight 2s ease-out;
+}
+
+@keyframes msgHighlight {
+  0% { background: rgba(var(--accent-rgb, 59,130,246), 0.2); }
+  100% { background: transparent; }
 }
 
 .merged-msgs {

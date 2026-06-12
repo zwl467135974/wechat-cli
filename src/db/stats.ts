@@ -444,3 +444,41 @@ export async function getChatStats(
     },
   };
 }
+
+export async function getKeywordTrend(
+  dataDir: string,
+  keyword: string
+): Promise<{ month: string; count: number }[]> {
+  if (!keyword) return [];
+  const shards = await getShards(dataDir);
+  const monthCounts: Record<string, number> = {};
+
+  for (const shard of shards) {
+    const db = await getConnection(shard.filePath);
+    const tables = db.exec(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'"
+    );
+    if (!tables.length) continue;
+
+    for (const t of tables[0].values) {
+      const tableName = String(t[0]);
+      try {
+        const rows = db.exec(
+          `SELECT create_time, message_content FROM "${tableName}" WHERE message_content LIKE ?`,
+          [`%${keyword}%`]
+        );
+        if (!rows.length) continue;
+        for (const r of rows[0].values) {
+          const ts = Number(r[0]) * 1000;
+          const d = new Date(ts);
+          const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+          monthCounts[month] = (monthCounts[month] || 0) + 1;
+        }
+      } catch { /* ignore */ }
+    }
+  }
+
+  return Object.entries(monthCounts)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, count]) => ({ month, count }));
+}

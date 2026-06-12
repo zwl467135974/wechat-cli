@@ -92,7 +92,15 @@ export async function searchMessages(
   dataDir: string,
   keyword: string,
   limit = 50,
-  offset = 0
+  offset = 0,
+  filters?: {
+    talker?: string;
+    sender?: string;
+    msgType?: number;
+    startTime?: number;
+    endTime?: number;
+    useRegex?: boolean;
+  }
 ): Promise<Message[]> {
   const shards = await getShards(dataDir);
   const allMessages: Message[] = [];
@@ -114,13 +122,16 @@ export async function searchMessages(
 
     for (const tableName of tables) {
       const talker = talkerReverse.get(tableName) || tableName;
-      const msgs = await searchInTable(
+      if (filters?.talker && talker !== filters.talker) continue;
+
+      const msgs = await searchInTableAdvanced(
         db,
         tableName,
         keyword,
         talker,
         limit + offset,
-        0
+        0,
+        filters
       );
       allMessages.push(...msgs);
     }
@@ -215,6 +226,74 @@ async function searchInTable(
     return await Promise.all(rows[0].values.map((row: unknown[]) =>
       parseMessageRow(row, talker)
     ));
+  } catch {
+    return [];
+  }
+}
+
+async function searchInTableAdvanced(
+  db: Database,
+  tableName: string,
+  keyword: string,
+  talker: string,
+  limit: number,
+  offset: number,
+  filters?: {
+    sender?: string;
+    msgType?: number;
+    startTime?: number;
+    endTime?: number;
+    useRegex?: boolean;
+  }
+): Promise<Message[]> {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  if (keyword) {
+    if (filters?.useRegex) {
+      conditions.push("message_content REGEXP ?");
+      params.push(keyword);
+    } else {
+      conditions.push("message_content LIKE ?");
+      params.push(`%${keyword}%`);
+    }
+  }
+  if (filters?.msgType !== undefined) {
+    conditions.push("(local_type & 0xFFFF) = ?");
+    params.push(filters.msgType);
+  }
+  if (filters?.startTime) {
+    conditions.push("create_time >= ?");
+    params.push(filters.startTime);
+  }
+  if (filters?.endTime) {
+    conditions.push("create_time <= ?");
+    params.push(filters.endTime);
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const sql = `SELECT sort_seq, create_time, local_type, message_content, compress_content, status, source, packed_info_data
+               FROM "${tableName}"
+               ${where}
+               ORDER BY sort_seq ASC
+               LIMIT ? OFFSET ?`;
+
+  try {
+    const rows = db.exec(sql, [...params, limit, offset]);
+    if (rows.length === 0) return [];
+
+    const msgs = await Promise.all(rows[0].values.map((row: unknown[]) =>
+      parseMessageRow(row, talker)
+    ));
+
+    if (filters?.sender) {
+      return msgs.filter(m => {
+        const s = (m.sender || "").toLowerCase();
+        return s.includes(filters.sender!.toLowerCase());
+      });
+    }
+    return msgs;
   } catch {
     return [];
   }
