@@ -455,8 +455,10 @@ function renderChatPage() {
             <input type="date" id="dateTo" style="padding:4px 6px;font-size:12px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius)" value="${$('#dateTo')?.value || ''}" title="结束日期">
             <button class="btn btn-secondary btn-sm" onclick="searchInChat()">搜索</button>
             <button class="btn btn-secondary btn-sm" id="chatSearchClear" style="display:none" onclick="clearChatSearch()">清除</button>
+            <button class="btn btn-secondary btn-sm" onclick="exportChatHtml()">导出HTML</button>
             ${state.aiEnabled ? `<button class="btn btn-primary btn-sm" onclick="aiSummarize(this)">AI 摘要</button>
-            <button class="btn btn-secondary btn-sm" onclick="aiSentiment(this)">情感分析</button>` : ''}
+            <button class="btn btn-secondary btn-sm" onclick="aiSentiment(this)">情感分析</button>
+            <button class="btn btn-secondary btn-sm" onclick="aiSentimentTrend(this)">情感趋势</button>` : ''}
           </div>` : ''}
           <div style="display:flex;flex:1;overflow:hidden">
             <div class="messages-container" id="messagesContainer" style="flex:1">${messagesHtml}</div>
@@ -1103,6 +1105,9 @@ function renderSearchPage() {
         <label style="font-size:13px;color:var(--text-secondary);display:flex;align-items:center;gap:4px">
           <input type="checkbox" id="searchGroup" ${state.searchGrouped ? 'checked' : ''} style="accent-color:var(--accent)"> 按会话分组
         </label>
+        <input type="date" id="searchStartDate" style="padding:3px 6px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-primary);font-size:12px" title="开始日期">
+        <span style="font-size:12px;color:var(--text-muted)">~</span>
+        <input type="date" id="searchEndDate" style="padding:3px 6px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-primary);font-size:12px" title="结束日期">
       </div>
       <div id="searchResults">${state.searchGrouped ? groupedHtml : (state.searchResults.map(r => {
         const session = state.sessions.find(s => s.username === r.talker);
@@ -1146,6 +1151,10 @@ async function doSearch(keyword, offset = 0) {
     let url = `/api/search?keyword=${encodeURIComponent(kw)}&limit=50&offset=${offset}`;
     if (msgType) url += `&msgType=${msgType}`;
     if (useRegex) url += `&regex=true`;
+    const startDate = $('#searchStartDate')?.value;
+    const endDate = $('#searchEndDate')?.value;
+    if (startDate) url += `&startTime=${Math.floor(new Date(startDate).getTime() / 1000)}`;
+    if (endDate) url += `&endTime=${Math.floor(new Date(endDate + 'T23:59:59').getTime() / 1000)}`;
     state.searchResults = await api(url);
     state.searchOffset = offset;
   } catch (e) {
@@ -1340,6 +1349,38 @@ async function loadAndRenderStats() {
     `<div class="fun-fact"><div class="fun-fact-icon">${f.icon}</div><div class="fun-fact-text">${f.text}</div></div>`
   ).join('');
 
+  const dailyMap = {};
+  for (const d of stats.dailyActivity) dailyMap[d.date] = d.count;
+  const calMax = Math.max(1, ...stats.dailyActivity.map(d => d.count));
+  const calYear = new Date().getFullYear();
+  const calCells = [];
+  const calStartDate = new Date(calYear, 0, 1);
+  const calEndDate = new Date(calYear, 11, 31);
+  const startWeekday = (calStartDate.getDay() + 6) % 7;
+  for (let i = 0; i < startWeekday; i++) calCells.push(null);
+  for (let d = new Date(calStartDate); d <= calEndDate; d.setDate(d.getDate() + 1)) {
+    const ds = d.toISOString().slice(0, 10);
+    calCells.push({ date: ds, count: dailyMap[ds] || 0 });
+  }
+  const heatColor = (c) => {
+    if (c === 0) return 'var(--bg-tertiary)';
+    const r = c / calMax;
+    if (r > 0.75) return '#1a7f37';
+    if (r > 0.5) return '#2da44e';
+    if (r > 0.25) return '#4ac26b';
+    return '#9be9a8';
+  };
+  const monthLabels = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+  let calendarHtml = `<div style="display:flex;gap:4px;align-items:flex-start;font-size:10px;color:var(--text-muted)"><span style="writing-mode:vertical-lr;margin-right:2px">一二三四五六日</span><div><div style="display:flex;gap:2px;margin-bottom:2px;padding-left:0">${monthLabels.map((m, i) => `<span style="width:12px;display:inline-block">${(i % 2 === 0 || i === 11) ? m : ''}</span>`).join('')}</div><div style="display:grid;grid-template-rows:repeat(7,12px);grid-auto-flow:column;gap:2px">`;
+  for (const cell of calCells) {
+    if (cell === null) {
+      calendarHtml += `<div style="width:12px;height:12px"></div>`;
+    } else {
+      calendarHtml += `<div style="width:12px;height:12px;border-radius:2px;background:${heatColor(cell.count)}" title="${cell.date}: ${cell.count}条"></div>`;
+    }
+  }
+  calendarHtml += `</div></div></div>`;
+
   $('#statsContent').innerHTML = `
     <div class="stats-hero stats-animate">
       <div class="stats-hero-title">聊天数据总览</div>
@@ -1415,6 +1456,16 @@ async function loadAndRenderStats() {
     </div>
 
     <div class="stats-card stats-animate" style="margin-bottom:24px">
+      <div class="stats-section-title">📅 ${calYear}年消息日历</div>
+      <div style="overflow-x:auto;padding:8px 0">${calendarHtml}</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:10px;color:var(--text-muted)">
+        <span>少</span>
+        ${['var(--bg-tertiary)','#9be9a8','#4ac26b','#2da44e','#1a7f37'].map(c => `<div style="width:12px;height:12px;border-radius:2px;background:${c}"></div>`).join('')}
+        <span>多</span>
+      </div>
+    </div>
+
+    <div class="stats-card stats-animate" style="margin-bottom:24px">
       <div class="stats-section-title">🎭 聊天画像</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px">
         ${funHtml}
@@ -1424,7 +1475,7 @@ async function loadAndRenderStats() {
     <div class="stats-card stats-animate" style="margin-bottom:24px">
       <div class="stats-section-title">📉 关键词趋势</div>
       <div style="display:flex;gap:8px;margin-bottom:12px">
-        <input class="search-input" id="trendKeyword" placeholder="输入关键词，如：工作、加班、开心" style="flex:1">
+        <input class="search-input" id="trendKeyword" placeholder="输入关键词，多个词用逗号分隔对比，如：工作,加班,开心" style="flex:1">
         <button class="btn btn-primary btn-sm" onclick="loadKeywordTrend()">查看趋势</button>
       </div>
       <div id="keywordTrendChart"></div>
@@ -1437,32 +1488,75 @@ async function loadAndRenderStats() {
         <button class="btn btn-primary btn-sm" onclick="loadInteractionGraph()">生成关系图</button>
       </div>
       <div id="interactionGraph" style="text-align:center;color:var(--text-secondary);padding:20px">选择群聊后点击生成</div>
+    </div>
+
+    <div class="stats-card stats-animate" style="margin-bottom:24px">
+      <div class="stats-section-title">🏆 群聊活跃度排行变化</div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <select class="input-field" id="rankingChatroom" style="flex:1"></select>
+        <button class="btn btn-primary btn-sm" onclick="loadMonthlyRanking()">生成排行</button>
+      </div>
+      <div id="monthlyRanking" style="text-align:center;color:var(--text-secondary);padding:20px">选择群聊后点击生成</div>
     </div>`;
 
 window.loadKeywordTrend = async function() {
-  const kw = $('#trendKeyword')?.value?.trim();
-  if (!kw) { showToast('请输入关键词', 'error'); return; }
+  const raw = $('#trendKeyword')?.value?.trim();
+  if (!raw) { showToast('请输入关键词', 'error'); return; }
+  const keywords = raw.split(/[,，]/).map(s => s.trim()).filter(Boolean);
   const container = $('#keywordTrendChart');
   container.innerHTML = '<div class="loading-spinner" style="margin:20px auto"></div>';
   try {
-    const data = await api(`/api/keyword-trend?keyword=${encodeURIComponent(kw)}`);
-    if (!data.length) {
-      container.innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:20px">未找到相关消息</div>';
-      return;
+    const allData = await Promise.all(keywords.map(kw =>
+      api(`/api/keyword-trend?keyword=${encodeURIComponent(kw)}`).then(d => ({ kw, data: d }))
+    ));
+    const months = [...new Set(allData.flatMap(d => d.data.map(r => r.month)))].sort();
+    const colors = ['#3b82f6', '#ef4444', '#22c55e', '#f97316', '#a855f7', '#06b6d4'];
+    const globalMax = Math.max(1, ...allData.flatMap(d => d.data.map(r => r.count)));
+
+    if (keywords.length === 1) {
+      const { kw, data } = allData[0];
+      if (!data.length) { container.innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:20px">未找到相关消息</div>'; return; }
+      const bars = data.map(d => {
+        const pct = (d.count / globalMax) * 100;
+        return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="font-size:11px;color:var(--text-secondary);width:56px;text-align:right;flex-shrink:0">${d.month}</span><div style="flex:1;background:var(--bg-tertiary);border-radius:4px;height:20px;overflow:hidden"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--accent),var(--purple));border-radius:4px;transition:width 0.5s ease"></div></div><span style="font-size:11px;color:var(--text-secondary);width:40px">${d.count}</span></div>`;
+      }).join('');
+      const total = data.reduce((s, d) => s + d.count, 0);
+      container.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">"${escapeHtml(kw)}" 共出现 ${total} 次，跨越 ${data.length} 个月</div>${bars}`;
+    } else {
+      const legend = allData.map((d, i) => `<span style="display:inline-flex;align-items:center;gap:4px;font-size:12px;margin-right:12px"><div style="width:12px;height:3px;border-radius:2px;background:${colors[i % colors.length]}"></div>${escapeHtml(d.kw)} (${d.data.reduce((s, r) => s + r.count, 0)})</span>`).join('');
+      const chartW = Math.max(300, months.length * 48);
+      let svg = `<svg width="100%" height="220" viewBox="0 0 ${chartW} 220" preserveAspectRatio="xMidYMid meet" style="overflow:visible">`;
+      const padL = 40, padR = 10, padT = 10, padB = 30;
+      const innerW = chartW - padL - padR;
+      const innerH = 220 - padT - padB;
+      if (months.length > 1) {
+        for (let i = 0; i <= 4; i++) {
+          const y = padT + (innerH / 4) * i;
+          const val = Math.round(globalMax * (1 - i / 4));
+          svg += `<line x1="${padL}" y1="${y}" x2="${chartW - padR}" y2="${y}" stroke="var(--border)" stroke-width="0.5"/><text x="${padL - 4}" y="${y + 3}" text-anchor="end" font-size="9" fill="var(--text-muted)">${val}</text>`;
+        }
+      }
+      months.forEach((m, i) => {
+        const x = padL + (months.length > 1 ? (innerW / (months.length - 1)) * i : innerW / 2);
+        svg += `<text x="${x}" y="215" text-anchor="middle" font-size="9" fill="var(--text-muted)">${m}</text>`;
+      });
+      allData.forEach((d, di) => {
+        const color = colors[di % colors.length];
+        const pts = months.map((m, i) => {
+          const r = d.data.find(r => r.month === m);
+          const x = padL + (months.length > 1 ? (innerW / (months.length - 1)) * i : innerW / 2);
+          const y = padT + innerH * (1 - (r ? r.count : 0) / globalMax);
+          return { x, y, count: r ? r.count : 0 };
+        });
+        const path = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+        svg += `<path d="${path}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>`;
+        for (const p of pts) {
+          svg += `<circle cx="${p.x}" cy="${p.y}" r="3" fill="${color}"><title>${d.kw} ${months[pts.indexOf(p)]}: ${p.count}</title></circle>`;
+        }
+      });
+      svg += '</svg>';
+      container.innerHTML = `<div style="margin-bottom:8px">${legend}</div>${svg}`;
     }
-    const maxCount = Math.max(...data.map(d => d.count), 1);
-    const bars = data.map(d => {
-      const pct = (d.count / maxCount) * 100;
-      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-        <span style="font-size:11px;color:var(--text-secondary);width:56px;text-align:right;flex-shrink:0">${d.month}</span>
-        <div style="flex:1;background:var(--bg-tertiary);border-radius:4px;height:20px;overflow:hidden">
-          <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--accent),var(--purple));border-radius:4px;transition:width 0.5s ease"></div>
-        </div>
-        <span style="font-size:11px;color:var(--text-secondary);width:40px">${d.count}</span>
-      </div>`;
-    }).join('');
-    const total = data.reduce((s, d) => s + d.count, 0);
-    container.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">"${escapeHtml(kw)}" 共出现 ${total} 次，跨越 ${data.length} 个月</div>${bars}`;
   } catch (e) {
     container.innerHTML = `<div style="color:var(--text-secondary);text-align:center;padding:20px">查询失败: ${escapeHtml(e.message)}</div>`;
   }
@@ -1473,6 +1567,11 @@ window.loadKeywordTrend = async function() {
   if (sel) {
     sel.innerHTML = chatrooms.map(s => `<option value="${escapeHtml(s.username)}">${escapeHtml(s.remark || s.nickname || s.username)}</option>`).join('');
     if (!chatrooms.length) sel.innerHTML = '<option>暂无群聊</option>';
+  }
+  const sel2 = document.getElementById('rankingChatroom');
+  if (sel2) {
+    sel2.innerHTML = chatrooms.map(s => `<option value="${escapeHtml(s.username)}">${escapeHtml(s.remark || s.nickname || s.username)}</option>`).join('');
+    if (!chatrooms.length) sel2.innerHTML = '<option>暂无群聊</option>';
   }
 
 window.loadInteractionGraph = async function() {
@@ -1519,7 +1618,58 @@ window.loadInteractionGraph = async function() {
   }
 };
 
-  statsStagger();
+window.loadMonthlyRanking = async function() {
+  const chatroom = document.getElementById('rankingChatroom')?.value;
+  if (!chatroom || !chatroom.includes('@chatroom')) { showToast('请选择一个群聊', 'error'); return; }
+  const el = document.getElementById('monthlyRanking');
+  el.innerHTML = '<div class="loading-spinner" style="margin:20px auto"></div>';
+  try {
+    const result = await api('/api/group-monthly-ranking?chatroom=' + encodeURIComponent(chatroom));
+    if (!result.months.length) { el.innerHTML = '<div style="color:var(--text-secondary)">该群无消息数据</div>'; return; }
+
+    const { months, members, data } = result;
+    const colors = ['#3b82f6','#ef4444','#22c55e','#f97316','#a855f7','#06b6d4','#ec4899','#eab308','#14b8a6','#6366f1'];
+    const contactMap = {};
+    if (state.contactMap) for (const [k, v] of Object.entries(state.contactMap)) contactMap[k] = v;
+    const memberLabel = (id) => {
+      const c = contactMap[id];
+      return c?.remark || c?.nickname || id.substring(0, 12);
+    };
+
+    const recentMonths = months.slice(-8);
+    const rows = members.map((m, mi) => {
+      const vals = recentMonths.map(mo => data[mo]?.[m] || 0);
+      const total = vals.reduce((s, v) => s + v, 0);
+      const color = colors[mi % colors.length];
+      const maxVal = Math.max(...vals, 1);
+      const bars = vals.map((v, i) => {
+        const h = (v / maxVal) * 100;
+        return `<div style="display:flex;flex-direction:column;justify-content:flex-end;height:80px;flex:1;align-items:center" title="${recentMonths[i]}: ${v}条">
+          <div style="width:60%;min-height:${v > 0 ? '2px' : '0'};height:${h}%;background:${color};border-radius:2px 2px 0 0;transition:height 0.5s ease"></div>
+        </div>`;
+      }).join('');
+      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;padding:4px 0;border-bottom:1px solid var(--border)">
+        <div style="width:12px;height:12px;border-radius:2px;background:${color};flex-shrink:0"></div>
+        <span style="width:90px;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0" title="${escapeHtml(memberLabel(m))}">${escapeHtml(memberLabel(m))}</span>
+        <div style="display:flex;gap:2px;flex:1">${bars}</div>
+        <span style="width:40px;font-size:11px;color:var(--text-secondary);text-align:right">${total}</span>
+      </div>`;
+    }).join('');
+
+    const header = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding-bottom:4px;border-bottom:2px solid var(--border)">
+      <div style="width:12px;flex-shrink:0"></div>
+      <span style="width:90px;font-size:10px;color:var(--text-muted);flex-shrink:0">成员</span>
+      <div style="display:flex;flex:1">${recentMonths.map(mo => `<div style="flex:1;text-align:center;font-size:9px;color:var(--text-muted)">${mo.slice(5)}</div>`).join('')}</div>
+      <span style="width:40px;font-size:10px;color:var(--text-muted);text-align:right">总计</span>
+    </div>`;
+
+    el.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px">最近 ${recentMonths.length} 个月 TOP 10 活跃成员</div>${header}${rows}`;
+  } catch (e) {
+    el.innerHTML = `<div style="color:var(--danger)">加载失败: ${escapeHtml(e.message)}</div>`;
+  }
+};
+
+   statsStagger();
 
   setTimeout(() => {
     animateCount(document.getElementById('statMsgCount'), stats.totalMessages);
@@ -1850,47 +2000,7 @@ async function renderFilesPage() {
         origBtn.onclick = (e) => { e.stopPropagation();
           if (!viewingOrig) { lbImg.src = imgList[cur] + '&original=true'; origBtn.textContent = '查看缩略图'; viewingOrig = true; }
           else { lbImg.src = imgList[cur]; origBtn.textContent = '查看原图'; viewingOrig = false; }
-};
-
-window.aiSentiment = async function(btn) {
-  if (!state.currentSession) return;
-  const origText = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = '分析中...';
-  try {
-    const res = await api('/api/ai/sentiment', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ talker: state.currentSession }),
-    });
-    if (res.error) { showToast(res.error, 'error'); return; }
-    const colorMap = { '积极': '#22c55e', '消极': '#ef4444', '中性': '#64748b' };
-    const color = colorMap[res.overall] || '#64748b';
-    const score = typeof res.score === 'number' ? (res.score * 100).toFixed(0) : '-';
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center';
-    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-    overlay.innerHTML = `<div class="stats-card" style="width:480px;max-height:80vh;overflow-y:auto;padding:24px">
-      <div class="stats-section-title" style="margin-bottom:16px">情感分析</div>
-      <div style="display:flex;gap:24px;align-items:center;margin-bottom:16px">
-        <div style="text-align:center">
-          <div style="font-size:48px;color:${color};font-weight:700">${score}%</div>
-          <div style="font-size:14px;color:${color};font-weight:600">${escapeHtml(res.overall || '未知')}</div>
-        </div>
-        <div style="flex:1;font-size:14px;line-height:1.8;color:var(--text-primary)">${escapeHtml(res.summary || '无分析结果')}</div>
-      </div>
-      ${res.keywords?.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap">${res.keywords.map(k => `<span style="padding:4px 10px;background:var(--bg-secondary);border-radius:12px;font-size:12px;color:var(--text-secondary)">${escapeHtml(k)}</span>`).join('')}</div>` : ''}
-      <button class="btn btn-secondary" style="width:100%;margin-top:16px" onclick="this.closest('div[style]').remove()">关闭</button>
-    </div>`;
-    document.body.appendChild(overlay);
-  } catch (e) {
-    showToast('分析失败: ' + e.message, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = origText;
-  }
-};
-
+        };
         const prev = overlay.querySelector('.lightbox-prev');
         const next = overlay.querySelector('.lightbox-next');
         if (prev) prev.onclick = (e) => { e.stopPropagation(); show(cur - 1); };
@@ -1946,6 +2056,179 @@ window.aiSentiment = async function(btn) {
     $('#mediaList').innerHTML = `<div class="fav-empty">加载失败: ${escapeHtml(e.message)}</div>`;
   }
 }
+
+window.aiSentiment = async function(btn) {
+  if (!state.currentSession) return;
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '分析中...';
+  try {
+    const res = await api('/api/ai/sentiment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ talker: state.currentSession }),
+    });
+    if (res.error) { showToast(res.error, 'error'); return; }
+    const colorMap = { '积极': '#22c55e', '消极': '#ef4444', '中性': '#64748b' };
+    const color = colorMap[res.overall] || '#64748b';
+    const score = typeof res.score === 'number' ? (res.score * 100).toFixed(0) : '-';
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center';
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `<div class="stats-card" style="width:480px;max-height:80vh;overflow-y:auto;padding:24px">
+      <div class="stats-section-title" style="margin-bottom:16px">情感分析</div>
+      <div style="display:flex;gap:24px;align-items:center;margin-bottom:16px">
+        <div style="text-align:center">
+          <div style="font-size:48px;color:${color};font-weight:700">${score}%</div>
+          <div style="font-size:14px;color:${color};font-weight:600">${escapeHtml(res.overall || '未知')}</div>
+        </div>
+        <div style="flex:1;font-size:14px;line-height:1.8;color:var(--text-primary)">${escapeHtml(res.summary || '无分析结果')}</div>
+      </div>
+      ${res.keywords?.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap">${res.keywords.map(k => `<span style="padding:4px 10px;background:var(--bg-secondary);border-radius:12px;font-size:12px;color:var(--text-secondary)">${escapeHtml(k)}</span>`).join('')}</div>` : ''}
+      <button class="btn btn-secondary" style="width:100%;margin-top:16px" onclick="this.closest('div[style]').remove()">关闭</button>
+    </div>`;
+    document.body.appendChild(overlay);
+  } catch (e) {
+    showToast('分析失败: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
+  }
+};
+
+window.aiSentimentTrend = async function(btn) {
+  if (!state.currentSession) return;
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '分析中...';
+  try {
+    const res = await api('/api/ai/sentiment-trend', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ talker: state.currentSession }),
+    });
+    if (res.error) { showToast(res.error, 'error'); return; }
+    const pts = res.points || [];
+    if (!pts.length) { showToast('数据不足', 'error'); return; }
+
+    const w = 420, h = 180, padL = 30, padR = 10, padT = 15, padB = 30;
+    const innerW = w - padL - padR, innerH = h - padT - padB;
+    let svg = `<svg width="100%" height="${h}" viewBox="0 0 ${w} ${h}" style="overflow:visible">`;
+    svg += `<line x1="${padL}" y1="${padT + innerH/2}" x2="${w - padR}" y2="${padT + innerH/2}" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="3,2"/>`;
+    for (let i = 0; i <= 4; i++) {
+      const y = padT + (innerH / 4) * i;
+      const val = (1 - i / 2).toFixed(1);
+      svg += `<text x="${padL - 4}" y="${y + 3}" text-anchor="end" font-size="9" fill="var(--text-muted)">${i > 2 ? '' : val}</text>`;
+    }
+    const colorOf = (s) => s > 0.2 ? '#22c55e' : s < -0.2 ? '#ef4444' : '#64748b';
+    pts.forEach((p, i) => {
+      const x = pts.length > 1 ? padL + (innerW / (pts.length - 1)) * i : padL + innerW / 2;
+      const y = padT + innerH * (0.5 - p.score / 2);
+      svg += `<circle cx="${x}" cy="${y}" r="5" fill="${colorOf(p.score)}"><title>${formatDate(p.time)}: ${p.label} (${p.score.toFixed(2)})</title></circle>`;
+      svg += `<text x="${x}" y="${h - 12}" text-anchor="middle" font-size="8" fill="var(--text-muted)">${formatDate(p.time).slice(5,10)}</text>`;
+      svg += `<text x="${x}" y="${y - 10}" text-anchor="middle" font-size="8" fill="${colorOf(p.score)}">${p.label}</text>`;
+      if (i > 0) {
+        const px = padL + (innerW / (pts.length - 1)) * (i - 1);
+        const py = padT + innerH * (0.5 - pts[i-1].score / 2);
+        svg = svg.replace('</svg>', '');
+        svg += `<line x1="${px}" y1="${py}" x2="${x}" y2="${y}" stroke="var(--border)" stroke-width="1.5"/>`;
+      }
+    });
+    svg += '</svg>';
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center';
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `<div class="stats-card" style="width:500px;max-height:80vh;overflow-y:auto;padding:24px">
+      <div class="stats-section-title" style="margin-bottom:16px">📊 情感趋势</div>
+      <div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px">基于最近消息分批分析，-1(消极) ~ 1(积极)</div>
+      ${svg}
+      <div style="display:flex;gap:12px;margin-top:12px;font-size:11px">
+        <span style="display:flex;align-items:center;gap:4px"><div style="width:10px;height:10px;border-radius:50%;background:#22c55e"></div>积极</span>
+        <span style="display:flex;align-items:center;gap:4px"><div style="width:10px;height:10px;border-radius:50%;background:#64748b"></div>中性</span>
+        <span style="display:flex;align-items:center;gap:4px"><div style="width:10px;height:10px;border-radius:50%;background:#ef4444"></div>消极</span>
+      </div>
+      <button class="btn btn-secondary" style="width:100%;margin-top:16px" onclick="this.closest('div[style*=\"position:fixed\"]')?.remove()">关闭</button>
+    </div>`;
+    document.body.appendChild(overlay);
+  } catch (e) {
+    showToast('分析失败: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
+  }
+};
+
+window.exportChatHtml = async function() {
+  if (!state.currentSession) return;
+  const session = state.sessions.find(s => s.username === state.currentSession);
+  const title = session ? (session.remark || session.nickname || session.alias || state.currentSession) : state.currentSession;
+  try {
+    showToast('正在加载消息...');
+    const allMsgs = [];
+    let offset = 0;
+    while (true) {
+      const batch = await api(`/api/messages?talker_id=${encodeURIComponent(state.currentSession)}&limit=100&offset=${offset}`);
+      if (!batch.length) break;
+      allMsgs.push(...batch);
+      if (batch.length < 100) break;
+      offset += 100;
+      if (offset >= 5000) break;
+    }
+    if (!allMsgs.length) { showToast('无消息可导出', 'error'); return; }
+
+    const rows = allMsgs.map(m => {
+      const time = new Date(m.time).toLocaleString('zh-CN');
+      const sender = m.isSelf ? '我' : escapeHtml(m.sender || '对方');
+      let content = escapeHtml(m.content || '');
+      if (m.type === 'image') content = `[图片]`;
+      if (m.type === 'video') content = `[视频]`;
+      if (m.type === 'voice') content = `[语音]`;
+      if (m.type === 'file') content = `[文件] ${content}`;
+      if (m.type === 'emoji') content = `[表情]`;
+      const side = m.isSelf ? 'right' : 'left';
+      return `<div class="msg ${side}"><div class="msg-sender">${sender}</div><div class="msg-content">${content}</div><div class="msg-time">${time}</div></div>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(title)} - 聊天记录</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f5f5f5;padding:20px}
+h1{text-align:center;margin-bottom:20px;color:#333;font-size:20px}
+.meta{text-align:center;color:#999;font-size:13px;margin-bottom:20px}
+.chat{max-width:700px;margin:0 auto;background:#fff;border-radius:12px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1)}
+.msg{margin-bottom:16px;padding:10px 14px;border-radius:10px;max-width:75%}
+.msg.right{margin-left:auto;background:#95ec69;text-align:right}
+.msg.left{margin-right:auto;background:#f0f0f0}
+.msg-sender{font-size:12px;color:#666;margin-bottom:4px}
+.msg-content{font-size:14px;line-height:1.6;word-break:break-word}
+.msg-time{font-size:11px;color:#999;margin-top:4px}
+</style>
+</head>
+<body>
+<h1>${escapeHtml(title)}</h1>
+<div class="meta">${allMsgs.length} 条消息 · 导出于 ${new Date().toLocaleString('zh-CN')}</div>
+<div class="chat">${rows}</div>
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title}_聊天记录.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast(`已导出 ${allMsgs.length} 条消息`);
+  } catch (e) {
+    showToast('导出失败: ' + e.message, 'error');
+  }
+};
 
 async function renderEmojiPage() {
   const main = $('#mainContent');

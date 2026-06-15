@@ -525,3 +525,64 @@ export async function getYearTopWords(
     .slice(0, limit)
     .map(([word, count]) => ({ word, count }));
 }
+
+export async function getGroupMonthlyRanking(
+  dataDir: string,
+  talker: string
+): Promise<{ months: string[]; members: string[]; data: Record<string, Record<string, number>> }> {
+  const shards = await getShards(dataDir);
+  const start = new Date(2010, 0, 1);
+  const end = new Date();
+  const targets = resolveShards(shards, start, end, talker);
+  if (targets.length === 0) return { months: [], members: [], data: {} };
+
+  const monthly: Record<string, Record<string, number>> = {};
+  const memberSet = new Set<string>();
+
+  for (const target of targets) {
+    const db = await getConnection(target.filePath);
+    const tableName = findMsgTable(db, talker, target.talkerId);
+    if (!tableName) continue;
+
+    const rows = db.exec(
+      `SELECT message_content, status, create_time FROM "${tableName}" LIMIT 100000`
+    );
+    if (!rows.length) continue;
+
+    for (const r of rows[0].values) {
+      const raw = r[0];
+      const status = Number(r[1]);
+      const time = Number(r[2]);
+      let text = "";
+      if (raw instanceof Uint8Array || Buffer.isBuffer(raw)) {
+        text = await decodeMessageContent(Buffer.from(raw));
+      } else if (raw != null) {
+        text = String(raw);
+      }
+      if (!text) continue;
+      if (status === 2) continue;
+
+      const split = text.split(":\n", 2);
+      if (split.length !== 2) continue;
+      const snd = split[0];
+      if (!snd || snd.length >= 60 || !/^[\w@.]+$/.test(snd)) continue;
+
+      const d = new Date(time * 1000);
+      const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      if (!monthly[month]) monthly[month] = {};
+      monthly[month][snd] = (monthly[month][snd] || 0) + 1;
+      memberSet.add(snd);
+    }
+  }
+
+  const months = Object.keys(monthly).sort();
+  const allMembers = [...memberSet];
+
+  const memberTotals: Record<string, number> = {};
+  for (const m of allMembers) {
+    memberTotals[m] = months.reduce((s, mo) => s + (monthly[mo][m] || 0), 0);
+  }
+  const members = allMembers.sort((a, b) => memberTotals[b] - memberTotals[a]).slice(0, 10);
+
+  return { months, members, data: monthly };
+}

@@ -7,7 +7,7 @@ import {
   searchMessages,
   clearShardCache,
 } from "../db/query-messages.js";
-import { getGlobalStats, getChatStats, getKeywordTrend, getYearTopWords } from "../db/stats.js";
+import { getGlobalStats, getChatStats, getKeywordTrend, getYearTopWords, getGroupMonthlyRanking } from "../db/stats.js";
 import { closeAll, findFilesByType } from "../db/manager.js";
 import { execPython } from "../python/runner.js";
 import { getConfig, saveEnvFile } from "../config.js";
@@ -22,7 +22,7 @@ import {
   convertWxgfToJpg,
 } from "./image.js";
 import { doRefresh } from "./refresh.js";
-import { callAi, isAiEnabled } from "./ai.js";
+import { callAi, isAiEnabled, extractAiJson } from "./ai.js";
 import { addBookmark, removeBookmark, getBookmarks, isBookmarked } from "../db/bookmark-store.js";
 import { getWxFavorites, getFavoriteTypeLabel } from "../db/query-favorites.js";
 import { getEmojis } from "../db/query-emoji.js";
@@ -695,6 +695,69 @@ const webDir = fs.existsSync(distRelativeWebDir)
   ? distRelativeWebDir
   : srcRelativeWebDir;
 
+app.get("/api/interaction-graph", async (c) => {
+  const config = getConfig();
+  const chatroom = c.req.query("chatroom");
+  if (!chatroom) return c.json({ error: "chatroom required" }, 400);
+  const { getMessages } = await import("../db/query-messages.js");
+  const messages = await getMessages(config.dataDir, chatroom, { limit: 500, reverse: false });
+
+  const pairs: Record<string, number> = {};
+  const senderCounts: Record<string, number> = {};
+  const replyPairs: Record<string, number> = {};
+
+  for (const msg of messages) {
+    const sender = msg.sender;
+    if (!sender) continue;
+    senderCounts[sender] = (senderCounts[sender] || 0) + 1;
+    if (msg.referContent && msg.referSender && msg.referSender !== sender) {
+      const key = [sender, msg.referSender].sort().join("::");
+      replyPairs[key] = (replyPairs[key] || 0) + 1;
+    }
+  }
+
+  const activeSenders = Object.entries(senderCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 30)
+    .map(([s]) => s);
+
+  for (const msg of messages) {
+    const s1 = msg.sender;
+    if (!s1 || !activeSenders.includes(s1)) continue;
+    const time = new Date(msg.time).getTime();
+    for (const s2 of activeSenders) {
+      if (s2 <= s1) continue;
+      const key = [s1, s2].sort().join("::");
+      pairs[key] = (pairs[key] || 0) + 1;
+    }
+  }
+
+  const edges = Object.entries(pairs)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 50)
+    .map(([key, count]) => {
+      const [source, target] = key.split("::");
+      return { source, target, count, replies: replyPairs[key] || 0 };
+    });
+
+  const { loadContactMap } = await import("../db/query-contacts.js");
+  const contactMap = await loadContactMap(config.dataDir, activeSenders);
+  const nodes = activeSenders.map(s => {
+    const c = contactMap.get(s);
+    return { id: s, name: c?.nickname || c?.remark || s, messages: senderCounts[s] };
+  });
+
+  return c.json({ nodes, edges });
+});
+
+app.get("/api/group-monthly-ranking", async (c) => {
+  const config = getConfig();
+  const chatroom = c.req.query("chatroom");
+  if (!chatroom) return c.json({ error: "chatroom required" }, 400);
+  const result = await getGroupMonthlyRanking(config.dataDir, chatroom);
+  return c.json(result);
+});
+
 app.get("/assets/*", serveStatic({ root: webDir }));
 
 app.get("*", async (c) => {
@@ -790,7 +853,7 @@ app.post("/api/ai/sentiment", async (c) => {
   try {
     const { talker } = await c.req.json<{ talker: string }>();
     if (!talker) return c.json({ error: "talker required" }, 400);
-    const { isAiEnabled, callAi } = await import("../server/ai.js");
+    const { isAiEnabled, callAi, extractAiJson: extractJson } = await import("../server/ai.js");
     if (!isAiEnabled()) return c.json({ error: "AI 功能未配置" }, 400);
 
     const config = getConfig();
@@ -807,15 +870,59 @@ app.post("/api/ai/sentiment", async (c) => {
     const result = await callAi([
       { role: "system", content: "你是聊天情感分析专家。分析以下聊天记录的整体情感倾向。返回JSON格式：{\"overall\":\"积极/消极/中性\",\"score\":0.8,\"summary\":\"简短中文描述\",\"keywords\":[\"关键词1\",\"关键词2\"]}。只返回JSON，不要其他内容。" },
       { role: "user", content: textMessages }
-    ], { temperature: 0.3, maxTokens: 300 });
+    ], { temperature: 0.3, maxTokens: 300, thinking: false });
 
-    let parsed: Record<string, unknown> = {};
-    try {
-      const match = result.match(/\{[\s\S]*\}/);
-      if (match) parsed = JSON.parse(match[0]);
-    } catch { /* fallback */ }
+    const parsed = extractAiJson(result) || {};
 
     return c.json(parsed);
+  } catch (e: unknown) {
+    return c.json({ error: (e as Error).message }, 500);
+  }
+});
+
+app.post("/api/ai/sentiment-trend", async (c) => {
+  try {
+    const { talker, chunkSize } = await c.req.json<{ talker: string; chunkSize?: number }>();
+    if (!talker) return c.json({ error: "talker required" }, 400);
+    const { isAiEnabled, callAi } = await import("../server/ai.js");
+    if (!isAiEnabled()) return c.json({ error: "AI 功能未配置" }, 400);
+
+    const config = getConfig();
+    const { getMessages } = await import("../db/query-messages.js");
+    const messages = await getMessages(config.dataDir, talker, { limit: 200, reverse: true });
+    if (!messages.length) return c.json({ error: "无消息数据" }, 404);
+
+    const cs = Math.max(10, Math.min(50, chunkSize || 40));
+    const textMsgs = messages.filter(m => m.content && !m.content.startsWith("["));
+    const totalChunks = Math.min(6, Math.ceil(textMsgs.length / cs));
+    const step = Math.floor(textMsgs.length / totalChunks);
+    if (step < 5) return c.json({ error: "消息太少，无法分析趋势" }, 400);
+
+    const results: Array<{ time: string; score: number; label: string }> = [];
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * step;
+      const batch = textMsgs.slice(start, start + step);
+      if (!batch.length) continue;
+      const batchText = batch.slice(0, 30).map(m => `${m.isSelf ? '我' : m.sender}: ${m.content}`).join("\n");
+      const midTime = batch[Math.floor(batch.length / 2)].time;
+      try {
+        const result = await callAi([
+          { role: "system", content: "分析以下聊天片段的情感倾向。返回JSON：{\"score\":0.8,\"label\":\"积极\"}。score范围-1到1，-1最消极，1最积极，0中性。只返回JSON。" },
+          { role: "user", content: batchText }
+        ], { temperature: 0.3, maxTokens: 100, thinking: false });
+        const p = extractAiJson<{ score?: number; label?: string }>(result);
+        if (p && typeof p.score === 'number') {
+          results.push({ time: midTime, score: p.score, label: p.label || (p.score > 0.2 ? '积极' : p.score < -0.2 ? '消极' : '中性') });
+        } else {
+          results.push({ time: midTime, score: 0, label: '中性' });
+        }
+      } catch {
+        results.push({ time: midTime, score: 0, label: '分析失败' });
+      }
+    }
+
+    results.sort((a, b) => a.time.localeCompare(b.time));
+    return c.json({ points: results });
   } catch (e: unknown) {
     return c.json({ error: (e as Error).message }, 500);
   }
@@ -831,7 +938,7 @@ app.post("/api/ai/smart-search", async (c) => {
     const aiResult = await callAi([
       { role: "system", content: "你是微信聊天记录搜索助手。用户输入自然语言描述，你提取出搜索关键词。只返回一个JSON数组，包含2-5个关键词字符串，不要其他内容。示例：用户说\"上个月和小王讨论旅游的事情\"，你返回 [\"小王\",\"旅游\"]" },
       { role: "user", content: query }
-    ], { temperature: 0.3, maxTokens: 200 });
+    ], { temperature: 0.3, maxTokens: 200, thinking: false });
 
     let keywords: string[] = [];
     try {
@@ -847,61 +954,6 @@ app.post("/api/ai/smart-search", async (c) => {
   } catch (e: unknown) {
     return c.json({ error: (e as Error).message }, 500);
   }
-});
-
-app.get("/api/interaction-graph", async (c) => {
-  const config = getConfig();
-  const chatroom = c.req.query("chatroom");
-  if (!chatroom) return c.json({ error: "chatroom required" }, 400);
-  const { getMessages } = await import("../db/query-messages.js");
-  const messages = await getMessages(config.dataDir, chatroom, { limit: 500, reverse: false });
-
-  const pairs: Record<string, number> = {};
-  const senderCounts: Record<string, number> = {};
-  const replyPairs: Record<string, number> = {};
-
-  for (const msg of messages) {
-    const sender = msg.sender;
-    if (!sender) continue;
-    senderCounts[sender] = (senderCounts[sender] || 0) + 1;
-    if (msg.referContent && msg.referSender && msg.referSender !== sender) {
-      const key = [sender, msg.referSender].sort().join("::");
-      replyPairs[key] = (replyPairs[key] || 0) + 1;
-    }
-  }
-
-  const activeSenders = Object.entries(senderCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 30)
-    .map(([s]) => s);
-
-  for (const msg of messages) {
-    const s1 = msg.sender;
-    if (!s1 || !activeSenders.includes(s1)) continue;
-    const time = new Date(msg.time).getTime();
-    for (const s2 of activeSenders) {
-      if (s2 <= s1) continue;
-      const key = [s1, s2].sort().join("::");
-      pairs[key] = (pairs[key] || 0) + 1;
-    }
-  }
-
-  const edges = Object.entries(pairs)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 50)
-    .map(([key, count]) => {
-      const [source, target] = key.split("::");
-      return { source, target, count, replies: replyPairs[key] || 0 };
-    });
-
-  const { loadContactMap } = await import("../db/query-contacts.js");
-  const contactMap = await loadContactMap(config.dataDir, activeSenders);
-  const nodes = activeSenders.map(s => {
-    const c = contactMap.get(s);
-    return { id: s, name: c?.nickname || c?.remark || s, messages: senderCounts[s] };
-  });
-
-  return c.json({ nodes, edges });
 });
 
 export { app };
