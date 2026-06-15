@@ -381,7 +381,12 @@ export function extractAppMessage(raw: string): AppMessageResult {
   }
 
   if (result.appType === 19) {
-    const parseDataItem = (block: string): string => {
+    const desMatch = raw.match(/<des>([\s\S]*?)<\/des>/);
+    const desLines: string[] = desMatch
+      ? desMatch[1].replace(/&amp;#x20;/g, " ").replace(/&amp;#x0A;/g, "\n").split("\n").map(s => s.trim()).filter(Boolean)
+      : [];
+
+    const parseDataItem = (block: string, idx: number): string => {
       const nameMatch = block.match(/<sourcename>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/sourcename>/);
       const timeMatch = block.match(/<sourcetime>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/sourcetime>/);
       const descMatch = block.match(/<datadesc>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/datadesc>/);
@@ -393,8 +398,10 @@ export function extractAppMessage(raw: string): AppMessageResult {
       let desc: string;
       if (descMatch && descMatch[1].trim()) {
         desc = descMatch[1].trim();
+      } else if (desLines[idx]) {
+        desc = desLines[idx].replace(/^[^:]+:\s*/, "");
       } else {
-        desc = dt === "2" ? "[图片]" : dt === "3" ? "[视频]" : dt === "4" ? "[链接]" : dt === "5" ? "[文件]" : "[消息]";
+        desc = dt === "2" ? "[图片]" : dt === "3" ? "[视频]" : dt === "4" ? "[视频]" : dt === "5" ? "[文件]" : "[消息]";
       }
       return `${name}${time ? ` (${time})` : ""}: ${desc}`;
     };
@@ -405,7 +412,7 @@ export function extractAppMessage(raw: string): AppMessageResult {
       const dataItems = recordXml.match(/<dataitem[\s\S]*?<\/dataitem>/g);
       if (dataItems && dataItems.length > 0) {
         result.content = `[合并转发] ${title} (${dataItems.length}条)`;
-        result.subMessages = dataItems.map(block => parseDataItem(block));
+        result.subMessages = dataItems.map((block, idx) => parseDataItem(block, idx));
         return result;
       }
     }
@@ -415,7 +422,7 @@ export function extractAppMessage(raw: string): AppMessageResult {
       const dataItems = dataListMatch[2].match(/<dataitem[\s\S]*?<\/dataitem>/g);
       if (dataItems && dataItems.length > 0) {
         result.content = `[合并转发] ${title} (${count}条)`;
-        result.subMessages = dataItems.map(block => parseDataItem(block));
+        result.subMessages = dataItems.map((block, idx) => parseDataItem(block, idx));
         return result;
       }
     }
