@@ -65,7 +65,7 @@ export async function parseMessageRow(
   const isChatRoom = defaultTalker.endsWith("@chatroom");
   const source = row[6];
   let sender = "";
-  let isSelf = status === 2;
+  let isSelf = status >= 2;
   let content = rawText;
 
   if (isChatRoom && rawText) {
@@ -378,6 +378,52 @@ export function extractAppMessage(raw: string): AppMessageResult {
       result.content += `\n▎回复 ${sender}: ${ref.substring(0, 100)}${ref.length > 100 ? "..." : ""}`;
     }
     return result;
+  }
+
+  if (result.appType === 19) {
+    const recordMatch = raw.match(/<recorditem><!\[CDATA\[([\s\S]*?)\]\]><\/recorditem>/);
+    if (recordMatch) {
+      const recordXml = recordMatch[1];
+      const dataItems = recordXml.match(/<dataitem[\s\S]*?<\/dataitem>/g);
+      if (dataItems && dataItems.length > 0) {
+        const items = dataItems.slice(0, 10).map((block, i) => {
+          const nameMatch = block.match(/<sourcename>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/sourcename>/);
+          const descMatch = block.match(/<datadesc>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/datadesc>/);
+          const name = nameMatch ? nameMatch[1].trim() : "";
+          const desc = descMatch ? descMatch[1].trim() : "...";
+          return `${name}: ${desc.substring(0, 80)}`;
+        });
+        result.content = `[合并转发] ${title} (${dataItems.length}条)`;
+        result.subMessages = dataItems.map((block, i) => {
+          const nameMatch = block.match(/<sourcename>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/sourcename>/);
+          const timeMatch = block.match(/<sourcetime>([\s\S]*?)<\/sourcetime>/);
+          const descMatch = block.match(/<datadesc>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/datadesc>/);
+          const name = nameMatch ? nameMatch[1].trim() : "";
+          const time = timeMatch ? timeMatch[1].trim() : "";
+          const desc = descMatch ? descMatch[1].trim() : "...";
+          return `${name}${time ? ` (${time})` : ""}: ${desc}`;
+        });
+        return result;
+      }
+    }
+    const dataListMatch = raw.match(/<datalist\s+count="(\d+)">([\s\S]*?)<\/datalist>/);
+    if (dataListMatch) {
+      const count = Number(dataListMatch[1]);
+      const dataItems = dataListMatch[2].match(/<dataitem[\s\S]*?<\/dataitem>/g);
+      if (dataItems && dataItems.length > 0) {
+        result.content = `[合并转发] ${title} (${count}条)`;
+        result.subMessages = dataItems.map((block) => {
+          const nameMatch = block.match(/<sourcename>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/sourcename>/);
+          const timeMatch = block.match(/<sourcetime>([\s\S]*?)<\/sourcetime>/);
+          const descMatch = block.match(/<datadesc>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/datadesc>/);
+          const name = nameMatch ? nameMatch[1].trim() : "";
+          const time = timeMatch ? timeMatch[1].trim() : "";
+          const desc = descMatch ? descMatch[1].trim() : "...";
+          return `${name}${time ? ` (${time})` : ""}: ${desc}`;
+        });
+        return result;
+      }
+    }
   }
 
   const appInfoMatch = raw.match(/<appinfo>[\s\S]*?<title>([\s\S]*?)<\/title>[\s\S]*?<\/appinfo>/);
