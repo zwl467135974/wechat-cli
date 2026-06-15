@@ -65,7 +65,7 @@ export async function parseMessageRow(
   const isChatRoom = defaultTalker.endsWith("@chatroom");
   const source = row[6];
   let sender = "";
-  let isSelf = status >= 2;
+  let isSelf = status === 2;
   let content = rawText;
 
   if (isChatRoom && rawText) {
