@@ -1672,6 +1672,22 @@ function renderYearReportContent(r) {
           </div>
         </div>` : ''}
 
+        ${r.topWords && r.topWords.length > 0 ? `<div class="stats-card" style="margin-bottom:16px">
+          <div class="stats-section-title">💭 年度高频词</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;justify-content:center;padding:12px">
+            ${r.topWords.map((w, i) => {
+              const maxCount = r.topWords[0].count;
+              const ratio = w.count / maxCount;
+              const fontSize = (12 + ratio * 24).toFixed(0);
+              const opacity = (0.4 + ratio * 0.6).toFixed(2);
+              const colors = ['var(--accent)', 'var(--purple)', '#22c55e', '#f97316', '#06b6d4'];
+              const color = colors[i % colors.length];
+              return `<span style="font-size:${fontSize}px;color:${color};opacity:${opacity};font-weight:${ratio > 0.5 ? '700' : '400'};transition:transform 0.2s" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'">${escapeHtml(w.word)}</span>`;
+            }).join('')}
+          </div>
+          <div style="text-align:center;font-size:11px;color:var(--text-muted);margin-top:8px">第一名 "${escapeHtml(r.topWords[0].word)}" 出现 ${r.topWords[0].count} 次</div>
+        </div>` : ''}
+
       </div>
     </div>`;
 }

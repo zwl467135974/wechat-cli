@@ -7,7 +7,7 @@ import {
   searchMessages,
   clearShardCache,
 } from "../db/query-messages.js";
-import { getGlobalStats, getChatStats, getKeywordTrend } from "../db/stats.js";
+import { getGlobalStats, getChatStats, getKeywordTrend, getYearTopWords } from "../db/stats.js";
 import { closeAll, findFilesByType } from "../db/manager.js";
 import { execPython } from "../python/runner.js";
 import { getConfig, saveEnvFile } from "../config.js";
@@ -675,7 +675,8 @@ app.get("/api/year-report", async (c) => {
     const year = Number(c.req.query("year")) || new Date().getFullYear();
     const stats = await getGlobalStats(config.dataDir);
     const emojis = await getEmojis(config.dataDir, 10, 0);
-    const report = buildYearReport(stats, year, emojis.items);
+    const topWords = await getYearTopWords(config.dataDir, year);
+    const report = buildYearReport(stats, year, emojis.items, topWords);
     return c.json(report);
   } catch (e: unknown) {
     return c.json({ error: (e as Error).message }, 500);
@@ -730,7 +731,8 @@ app.get("*", async (c) => {
 function buildYearReport(
   stats: import("../db/stats.js").GlobalStats,
   year: number,
-  topEmojis: EmojiItem[]
+  topEmojis: EmojiItem[],
+  topWords: { word: string; count: number }[]
 ) {
   const daily = stats.dailyActivity.filter(d => d.date.startsWith(String(year)));
   const totalYear = daily.reduce((s, d) => s + d.count, 0);
@@ -780,6 +782,7 @@ function buildYearReport(
     hourlyActivity: stats.hourlyActivity,
     topEmojis: topEmojis.map(e => ({ url: e.url, md5: e.md5, source: e.source, count: e.count })),
     emojiTotal: topEmojis.reduce((s, e) => s + e.count, 0) || 0,
+    topWords,
   };
 }
 

@@ -482,3 +482,46 @@ export async function getKeywordTrend(
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([month, count]) => ({ month, count }));
 }
+
+export async function getYearTopWords(
+  dataDir: string,
+  year: number,
+  limit = 60
+): Promise<{ word: string; count: number }[]> {
+  const shards = await getShards(dataDir);
+  const yearStart = Math.floor(new Date(year, 0, 1).getTime() / 1000);
+  const yearEnd = Math.floor(new Date(year + 1, 0, 1).getTime() / 1000);
+  const wordCounts: Record<string, number> = {};
+
+  for (const shard of shards) {
+    const db = await getConnection(shard.filePath);
+    const tables = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'");
+    if (!tables.length) continue;
+
+    for (const tRow of tables[0].values) {
+      const tableName = String(tRow[0]);
+      try {
+        const rows = db.exec(
+          `SELECT message_content FROM "${tableName}" WHERE (local_type & 0xFFFF) = 1 AND create_time >= ${yearStart} AND create_time < ${yearEnd} LIMIT 2000`
+        );
+        if (!rows.length) continue;
+        for (const r of rows[0].values) {
+          let text: string;
+          try {
+            text = await decodeMessageContent(Buffer.from(r[0] as Uint8Array));
+          } catch {
+            text = String(r[0]);
+          }
+          for (const w of extractWords(text)) {
+            wordCounts[w] = (wordCounts[w] || 0) + 1;
+          }
+        }
+      } catch { /* skip */ }
+    }
+  }
+
+  return Object.entries(wordCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([word, count]) => ({ word, count }));
+}
