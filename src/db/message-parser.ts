@@ -381,28 +381,31 @@ export function extractAppMessage(raw: string): AppMessageResult {
   }
 
   if (result.appType === 19) {
+    const parseDataItem = (block: string): string => {
+      const nameMatch = block.match(/<sourcename>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/sourcename>/);
+      const timeMatch = block.match(/<sourcetime>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/sourcetime>/);
+      const descMatch = block.match(/<datadesc>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/datadesc>/);
+      const typeMatch = block.match(/datatype="(\d+)"/);
+      const name = nameMatch ? nameMatch[1].trim() : "";
+      let time = timeMatch ? timeMatch[1].trim() : "";
+      time = time.replace(/&#x20;/g, " ").replace(/&#x0A;/g, "");
+      const dt = typeMatch?.[1];
+      let desc: string;
+      if (descMatch && descMatch[1].trim()) {
+        desc = descMatch[1].trim();
+      } else {
+        desc = dt === "2" ? "[图片]" : dt === "3" ? "[视频]" : dt === "4" ? "[链接]" : dt === "5" ? "[文件]" : "[消息]";
+      }
+      return `${name}${time ? ` (${time})` : ""}: ${desc}`;
+    };
+
     const recordMatch = raw.match(/<recorditem><!\[CDATA\[([\s\S]*?)\]\]><\/recorditem>/);
     if (recordMatch) {
       const recordXml = recordMatch[1];
       const dataItems = recordXml.match(/<dataitem[\s\S]*?<\/dataitem>/g);
       if (dataItems && dataItems.length > 0) {
-        const items = dataItems.slice(0, 10).map((block, i) => {
-          const nameMatch = block.match(/<sourcename>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/sourcename>/);
-          const descMatch = block.match(/<datadesc>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/datadesc>/);
-          const name = nameMatch ? nameMatch[1].trim() : "";
-          const desc = descMatch ? descMatch[1].trim() : "...";
-          return `${name}: ${desc.substring(0, 80)}`;
-        });
         result.content = `[合并转发] ${title} (${dataItems.length}条)`;
-        result.subMessages = dataItems.map((block, i) => {
-          const nameMatch = block.match(/<sourcename>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/sourcename>/);
-          const timeMatch = block.match(/<sourcetime>([\s\S]*?)<\/sourcetime>/);
-          const descMatch = block.match(/<datadesc>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/datadesc>/);
-          const name = nameMatch ? nameMatch[1].trim() : "";
-          const time = timeMatch ? timeMatch[1].trim() : "";
-          const desc = descMatch ? descMatch[1].trim() : "...";
-          return `${name}${time ? ` (${time})` : ""}: ${desc}`;
-        });
+        result.subMessages = dataItems.map(block => parseDataItem(block));
         return result;
       }
     }
@@ -412,15 +415,7 @@ export function extractAppMessage(raw: string): AppMessageResult {
       const dataItems = dataListMatch[2].match(/<dataitem[\s\S]*?<\/dataitem>/g);
       if (dataItems && dataItems.length > 0) {
         result.content = `[合并转发] ${title} (${count}条)`;
-        result.subMessages = dataItems.map((block) => {
-          const nameMatch = block.match(/<sourcename>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/sourcename>/);
-          const timeMatch = block.match(/<sourcetime>([\s\S]*?)<\/sourcetime>/);
-          const descMatch = block.match(/<datadesc>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/datadesc>/);
-          const name = nameMatch ? nameMatch[1].trim() : "";
-          const time = timeMatch ? timeMatch[1].trim() : "";
-          const desc = descMatch ? descMatch[1].trim() : "...";
-          return `${name}${time ? ` (${time})` : ""}: ${desc}`;
-        });
+        result.subMessages = dataItems.map(block => parseDataItem(block));
         return result;
       }
     }

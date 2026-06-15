@@ -114,10 +114,12 @@ window.aiSummarize = async function(btn) {
 };
 
 window.toggleMerged = function(btn) {
-  const container = btn.parentElement;
+  const container = btn.closest('.merged-msgs');
+  if (!container) return;
   const collapsed = container.classList.contains('collapsed');
   container.classList.toggle('collapsed');
-  btn.textContent = collapsed ? '收起' : (container.querySelectorAll('.merged-item').length > 10 ? '展开全部 ' + container.querySelectorAll('.merged-item').length + ' 条' : '展开');
+  const itemCount = container.querySelectorAll('.merged-item').length;
+  btn.textContent = collapsed ? '收起' : (itemCount > 10 ? '展开全部 ' + itemCount + ' 条' : '展开');
 };
 
 window.showMergedPopup = function(btn) {
