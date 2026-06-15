@@ -143,6 +143,10 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+function linkifyText(s) {
+  return escapeHtml(s).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:var(--accent);word-break:break-all">$1</a>');
+}
+
 function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -265,7 +269,7 @@ function renderMessageContent(msg) {
     bubble = `<div class="message-bubble app-bubble">${thumb}${refHtml}<div class="app-title">${link}</div>${descHtml}${mergedHtml}</div>`;
   } else {
     const tag = getTypeTag(msg.type);
-    bubble = `<div class="message-bubble">${escapeHtml(msg.content)}${tag}</div>`;
+    bubble = `<div class="message-bubble">${linkifyText(msg.content)}${tag}</div>`;
   }
 
   return `
