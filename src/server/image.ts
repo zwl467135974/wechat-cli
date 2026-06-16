@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
@@ -31,32 +31,78 @@ export function isWxgf(buf: Buffer): boolean {
   return buf.length >= 4 && buf.subarray(0, 4).toString("ascii") === "wxgf";
 }
 
+let ffmpegPath: string | null | undefined;
+
+function findFfmpeg(): string | null {
+  if (ffmpegPath !== undefined) return ffmpegPath;
+  try {
+    const r = spawnSync("ffmpeg", ["-version"], { stdio: "ignore", timeout: 3000 });
+    ffmpegPath = r.status === 0 ? "ffmpeg" : null;
+  } catch {
+    ffmpegPath = null;
+  }
+  if (!ffmpegPath && process.platform === "win32") {
+    const candidates = [
+      path.join(process.env.PROGRAMFILES || "C:\\Program Files", "ffmpeg", "bin", "ffmpeg.exe"),
+      "C:\\ffmpeg\\bin\\ffmpeg.exe",
+    ];
+    for (const p of candidates) {
+      if (fs.existsSync(p)) { ffmpegPath = p; break; }
+    }
+  }
+  return ffmpegPath;
+}
+
+function findHevcStart(data: Buffer): number {
+  for (let i = 0; i < data.length - 5; i++) {
+    if (data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 0 && data[i + 3] === 1) {
+      const naluType = (data[i + 4] >> 1) & 0x3f;
+      if (naluType === 32 || naluType === 33 || naluType === 34 || naluType === 19 || naluType === 20) return i;
+    }
+  }
+  for (let i = 0; i < data.length - 5; i++) {
+    if (data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 0 && data[i + 3] === 1) return i;
+    if (data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 1) return i;
+  }
+  return -1;
+}
+
 export async function convertWxgfToJpg(decryptedData: Buffer): Promise<Buffer | null> {
   const tmpDir = path.join(os.tmpdir(), "wechat-cli");
   if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-
   const tmpId = Date.now() + "-" + Math.random().toString(36).slice(2, 8);
-  const tmpDat = path.join(tmpDir, `wxgf_${tmpId}.bin`);
-  const tmpJpg = path.join(tmpDir, `wxgf_${tmpId}.jpg`);
+  const tmpInput = path.join(tmpDir, `wxgf_${tmpId}.265`);
+  const tmpOutput = path.join(tmpDir, `wxgf_${tmpId}.jpg`);
 
   try {
-    fs.writeFileSync(tmpDat, decryptedData);
+    const hevcOffset = findHevcStart(decryptedData);
+    if (hevcOffset < 0) return null;
+    fs.writeFileSync(tmpInput, decryptedData.subarray(hevcOffset));
+
+    const ffmpeg = findFfmpeg();
+    if (ffmpeg) {
+      const r = spawnSync(ffmpeg, ["-i", tmpInput, "-frames:v", "1", "-q:v", "2", "-y", tmpOutput], {
+        stdio: "ignore", timeout: 10000,
+      });
+      if (r.status === 0 && fs.existsSync(tmpOutput)) {
+        return fs.readFileSync(tmpOutput);
+      }
+    }
 
     const scriptPath = path.join(PYTHON_DIR, "convert_wxgf.py");
     const result = await new Promise<boolean>((resolve) => {
-      const proc = spawn("python", [scriptPath, tmpDat, tmpJpg], { cwd: PYTHON_DIR });
+      const proc = spawn("python", [scriptPath, tmpInput, tmpOutput], { cwd: PYTHON_DIR });
       proc.stderr.on("data", () => {});
       proc.on("close", (code) => resolve(code === 0));
       proc.on("error", () => resolve(false));
     });
-
-    if (result && fs.existsSync(tmpJpg)) {
-      return fs.readFileSync(tmpJpg);
+    if (result && fs.existsSync(tmpOutput)) {
+      return fs.readFileSync(tmpOutput);
     }
     return null;
   } finally {
-    if (fs.existsSync(tmpDat)) fs.unlinkSync(tmpDat);
-    if (fs.existsSync(tmpJpg)) fs.unlinkSync(tmpJpg);
+    if (fs.existsSync(tmpInput)) fs.unlinkSync(tmpInput);
+    if (fs.existsSync(tmpOutput)) fs.unlinkSync(tmpOutput);
   }
 }
 
