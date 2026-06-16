@@ -74,11 +74,17 @@ function createMcpServer() {
 
   server.tool(
     "search_messages",
-    "在所有会话中全局搜索消息。",
+    "在所有会话中全局搜索消息。支持按发送者、消息类型、时间范围过滤，支持正则表达式。",
     {
       keyword: z.string().describe("搜索关键词"),
       limit: z.number().optional().describe("最大返回数量（默认 50）"),
       offset: z.number().optional().describe("分页偏移量"),
+      talker: z.string().optional().describe("按会话过滤（用户名/wxid）"),
+      sender: z.string().optional().describe("按发送者过滤"),
+      msg_type: z.number().optional().describe("按消息类型过滤（1=文本 3=图片 34=语音 43=视频 47=表情 49=应用 10000=系统）"),
+      start_time: z.number().optional().describe("开始时间（Unix 时间戳）"),
+      end_time: z.number().optional().describe("结束时间（Unix 时间戳）"),
+      use_regex: z.boolean().optional().describe("是否使用正则表达式搜索（默认 false）"),
     },
     async (args) => handleToolCall("search_messages", args)
   );
@@ -125,7 +131,7 @@ function createMcpServer() {
 
   server.tool(
     "export_chat",
-    "导出指定会话的聊天记录，支持 JSON 或 TXT 格式。",
+    "导出指定会话的聊天记录，支持 JSON、TXT 或 HTML 格式。",
     {
       talker: z
         .string()
@@ -134,8 +140,40 @@ function createMcpServer() {
         .enum(["json", "txt", "html"])
         .optional()
         .describe("导出格式：json、txt 或 html（默认 json）"),
+      limit: z
+        .number()
+        .optional()
+        .describe("导出消息数量上限（默认 10000）"),
     },
     async (args) => handleToolCall("export_chat", args)
+  );
+
+  server.tool(
+    "get_timeline",
+    "获取指定日期的消息时间线，跨所有会话按时间排列。用于回顾某一天的所有聊天动态。",
+    {
+      date: z.string().describe("日期，格式 YYYY-MM-DD"),
+      limit: z.number().optional().describe("最大返回数量（默认 200）"),
+    },
+    async (args) => handleToolCall("get_timeline", args)
+  );
+
+  server.tool(
+    "get_keyword_trend",
+    "分析关键词在不同时间段的出现频率趋势，返回按月统计的出现次数。",
+    {
+      keyword: z.string().describe("要分析的关键词"),
+    },
+    async (args) => handleToolCall("get_keyword_trend", args)
+  );
+
+  server.tool(
+    "get_year_report",
+    "生成年度聊天报告，包括总消息数、活跃天数、最活跃时段、最长连续聊天、Top联系人、消息类型分布、月度趋势、高频词和表情包。",
+    {
+      year: z.number().optional().describe("年份（默认当前年份）"),
+    },
+    async (args) => handleToolCall("get_year_report", args)
   );
 
   server.tool(
@@ -149,7 +187,16 @@ function createMcpServer() {
 }
 
 async function startMcpMode() {
-  initConfig();
+  initConfig({
+    dataDir: process.env.DATA_DIR || "decrypted",
+    pythonPath: process.env.PYTHON_PATH || "python",
+    wechatDbSrcPath: process.env.WECHAT_DB_SRC_PATH,
+    wechatDbKey: process.env.WECHAT_DB_KEY,
+    wechatPath: process.env.WECHAT_PATH,
+    wechatDataPath: process.env.WECHAT_DATA_PATH,
+    imageKey: process.env.IMAGE_KEY,
+    xorKey: process.env.XOR_KEY,
+  });
   const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);

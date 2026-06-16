@@ -365,11 +365,11 @@ app.get("/api/export", async (c) => {
   return c.json({ error: "unsupported format" }, 400);
 });
 
-function escHtml(s: string): string {
+export function escHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function buildExportHtml(talker: string, messages: import("../db/models.js").Message[]): string {
+export function buildExportHtml(talker: string, messages: import("../db/models.js").Message[]): string {
   const typeLabels: Record<number, string> = {
     1: "", 3: "[图片]", 34: "[语音]", 43: "[视频]",
     47: "[表情]", 48: "[位置]", 49: "[应用]", 10000: "[系统]", 10002: "[撤回]",
@@ -880,7 +880,7 @@ app.get("*", async (c) => {
   });
 });
 
-function buildYearReport(
+export function buildYearReport(
   stats: import("../db/stats.js").GlobalStats,
   year: number,
   topEmojis: EmojiItem[],

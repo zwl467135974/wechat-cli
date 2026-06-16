@@ -5,7 +5,7 @@
 ## 功能特性
 
 - **一键解密** — Web 向导引导完成密钥提取 + 数据库解密，无需手动操作
-- **MCP Server** — 作为 AI 工具的 MCP 服务端，支持查询会话、消息、联系人、统计等 10 个工具
+- **MCP Server** — 作为 AI 工具的 MCP 服务端，支持查询会话、消息、联系人、统计等 14 个工具
 - **Web UI** — 内置中文 Web 界面，支持聊天浏览、通讯录、全局搜索、数据统计
 - **多媒体支持** — 图片(缩略图+原图)、视频流播放、表情三级 fallback、语音转文字
 - **数据分析** — 全局统计仪表板 + 单会话统计面板(热力图/词云/成员排行/聊天画像)
@@ -108,14 +108,18 @@ npm run build
 |------|------|
 | `extract_db_key` | 从运行中的微信进程提取数据库密钥 |
 | `decrypt_database` | 解密微信数据库 |
+| `refresh_data` | 重新解密刷新数据 |
 | `list_sessions` | 列出聊天会话 |
-| `get_messages` | 获取指定会话的消息 |
-| `search_messages` | 全局搜索消息 |
+| `get_messages` | 获取指定会话的消息（支持时间范围过滤） |
+| `search_messages` | 全局搜索消息（支持按发送者/类型/时间/正则过滤） |
+| `get_timeline` | 获取指定日期的跨会话消息时间线 |
 | `get_contacts` | 获取联系人列表 |
 | `get_stats` | 获取全局统计数据 |
 | `get_chat_stats` | 获取单会话统计数据 |
 | `get_chatroom_members` | 获取群聊成员列表 |
-| `export_chat` | 导出聊天记录 |
+| `get_keyword_trend` | 分析关键词出现频率趋势 |
+| `get_year_report` | 生成年度聊天报告 |
+| `export_chat` | 导出聊天记录（JSON/TXT/HTML） |
 
 在 Claude Desktop 等 MCP 客户端中配置：
 
