@@ -1,4 +1,5 @@
 import { getConnection, findSingleFile } from "../db/manager.js";
+import { toLocalISO } from "./message-parser.js";
 import type { Contact, Session } from "../db/models.js";
 import type { Database } from "sql.js";
 
@@ -165,7 +166,7 @@ export async function getSessions(
       smallHeadUrl: contact?.smallHeadUrl || "",
       bigHeadUrl: contact?.bigHeadUrl || "",
       lastMessage: row[1] ? String(row[1]) : undefined,
-      lastTime: row[2] ? new Date(Number(row[2]) * 1000).toISOString() : undefined,
+      lastTime: row[2] ? toLocalISO(new Date(Number(row[2]) * 1000)) : undefined,
       unreadCount: Number(row[3]) || 0,
       isHidden: isHiddenAccount(username) || Number(row[4]) === 1,
       accountType,

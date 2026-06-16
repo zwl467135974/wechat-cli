@@ -7,6 +7,16 @@ import { findRecalledMessage } from "./recall-store.js";
 import type { Message } from "../db/models.js";
 import type { Database } from "sql.js";
 
+export function toLocalISO(date: Date): string {
+  const off = date.getTimezoneOffset();
+  const local = new Date(date.getTime() - off * 60000);
+  const sign = off <= 0 ? "+" : "-";
+  const abs = Math.abs(off);
+  return local.toISOString().slice(0, -1) + sign +
+    String(Math.floor(abs / 60)).padStart(2, "0") + ":" +
+    String(abs % 60).padStart(2, "0");
+}
+
 export function md5(input: string): string {
   return crypto.createHash("md5").update(input).digest("hex");
 }
@@ -194,7 +204,7 @@ export async function parseMessageRow(
 
   return {
     seq,
-    time: new Date(createTime * 1000).toISOString(),
+    time: toLocalISO(new Date(createTime * 1000)),
     talker: defaultTalker,
     sender,
     isSelf,

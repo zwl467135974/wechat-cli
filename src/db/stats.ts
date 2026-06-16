@@ -4,6 +4,7 @@ import {
   findSingleFile,
 } from "../db/manager.js";
 import { decodeMessageContent } from "../db/codec.js";
+import { toLocalISO } from "./message-parser.js";
 import { loadContactMap } from "../db/query-contacts.js";
 import { getShards } from "./query-messages.js";
 import {
@@ -186,8 +187,8 @@ export async function getGlobalStats(dataDir: string): Promise<GlobalStats> {
     hourlyActivity,
     dailyActivity: dailyArray,
     dateRange: {
-      earliest: earliest === Infinity ? "" : new Date(earliest * 1000).toISOString(),
-      latest: latest === 0 ? "" : new Date(latest * 1000).toISOString(),
+      earliest: earliest === Infinity ? "" : toLocalISO(new Date(earliest * 1000)),
+      latest: latest === 0 ? "" : toLocalISO(new Date(latest * 1000)),
     },
   };
 }
@@ -426,8 +427,8 @@ export async function getChatStats(
     totalMessages,
     myMessages,
     theirMessages,
-    firstMessage: firstTime === Infinity ? null : new Date(firstTime * 1000).toISOString(),
-    lastMessage: lastTime === 0 ? null : new Date(lastTime * 1000).toISOString(),
+      firstMessage: firstTime === Infinity ? null : toLocalISO(new Date(firstTime * 1000)),
+      lastMessage: lastTime === 0 ? null : toLocalISO(new Date(lastTime * 1000)),
     typeDistribution,
     hourlyActivity,
     dailyActivity: dailyArray,
