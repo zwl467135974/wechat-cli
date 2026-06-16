@@ -2654,12 +2654,27 @@ function renderSetupPage() {
 
         <div class="setup-step">
           <h3><span class="step-number">2.9</span> AI 助手配置（可选）</h3>
-          <p style="color:var(--text-secondary);margin-bottom:12px">接入 OpenAI 兼容 API 后，可启用对话摘要等 AI 功能。不配置不影响其他功能使用。</p>
+          <p style="color:var(--text-secondary);margin-bottom:12px">接入大模型 API 后，可启用对话摘要、情感分析、智能搜索等 AI 功能。不配置不影响其他功能使用。</p>
           <div class="input-group">
             <label>启用 AI 功能</label>
             <select class="input-field" id="setupAiEnabled">
               <option value="false">关闭</option>
               <option value="true">开启</option>
+            </select>
+          </div>
+          <div class="input-group">
+            <label>API 提供商（选择后自动填入）</label>
+            <select class="input-field" id="setupAiProvider" onchange="selectAiProvider()">
+              <option value="">— 自定义 —</option>
+              <option value="openai">OpenAI (GPT-4o)</option>
+              <option value="deepseek">DeepSeek (深度求索)</option>
+              <option value="glm">智谱 GLM</option>
+              <option value="qwen">通义千问 (阿里)</option>
+              <option value="kimi">Kimi (月之暗面)</option>
+              <option value="doubao">豆包 (字节跳动)</option>
+              <option value="gemini">Google Gemini</option>
+              <option value="siliconflow">硅基流动 (聚合)</option>
+              <option value="ollama">本地 Ollama</option>
             </select>
           </div>
           <div class="input-group">
@@ -2798,6 +2813,27 @@ window.doSaveSelfWxid = async function(btn) {
     btn.disabled = false;
     btn.textContent = origText;
   }
+};
+
+window.selectAiProvider = function() {
+  const provider = $('#setupAiProvider')?.value;
+  if (!provider) return;
+  const presets = {
+    openai:      { url: 'https://api.openai.com/v1',                         model: 'gpt-4o-mini',                       keyHint: 'sk-...' },
+    deepseek:    { url: 'https://api.deepseek.com/v1',                      model: 'deepseek-chat',                     keyHint: 'sk-...' },
+    glm:         { url: 'https://open.bigmodel.cn/api/paas/v4',             model: 'glm-4-flash',                       keyHint: 'xxx.xxx' },
+    qwen:        { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',model: 'qwen-turbo',                        keyHint: 'sk-...' },
+    kimi:        { url: 'https://api.moonshot.cn/v1',                       model: 'moonshot-v1-8k',                    keyHint: 'sk-...' },
+    doubao:      { url: 'https://ark.cn-beijing.volces.com/api/v3',         model: 'doubao-pro-32k',                    keyHint: 'xxx' },
+    gemini:      { url: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.0-flash',          keyHint: 'AIza...' },
+    siliconflow: { url: 'https://api.siliconflow.cn/v1',                    model: 'deepseek-ai/DeepSeek-V3',           keyHint: 'sk-...' },
+    ollama:      { url: 'http://localhost:11434/v1',                        model: 'qwen2.5:7b',                        keyHint: '无需填写' },
+  };
+  const p = presets[provider];
+  if (!p) return;
+  const urlEl = $('#setupAiUrl');   if (urlEl)  urlEl.value = p.url;
+  const mdlEl = $('#setupAiModel'); if (mdlEl)  mdlEl.value = p.model;
+  const keyEl = $('#setupAiKey');   if (keyEl)  keyEl.placeholder = p.keyHint;
 };
 
 window.doSaveAiConfig = async function(btn) {

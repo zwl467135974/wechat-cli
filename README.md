@@ -107,6 +107,45 @@ npm start
 
 以上配置也可通过 Web UI 设置页保存到 `.env` 文件。
 
+## AI 功能配置
+
+本项目支持所有 **OpenAI 兼容接口**的大模型 API。在 Web UI 设置页选择提供商后自动填入地址和推荐模型。
+
+### 支持的 API 提供商
+
+| 提供商 | API 地址 | 推荐模型 | 获取 Key |
+|--------|---------|---------|---------|
+| **OpenAI** | `https://api.openai.com/v1` | `gpt-4o-mini` | [platform.openai.com](https://platform.openai.com/api-keys) |
+| **DeepSeek** | `https://api.deepseek.com/v1` | `deepseek-chat` | [platform.deepseek.com](https://platform.deepseek.com/api_keys) |
+| **智谱 GLM** | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` | [open.bigmodel.cn](https://open.bigmodel.cn/usercenter/apikeys) |
+| **通义千问** | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-turbo` | [阿里云百炼](https://bailian.console.aliyun.com) |
+| **Kimi** | `https://api.moonshot.cn/v1` | `moonshot-v1-8k` | [platform.moonshot.cn](https://platform.moonshot.cn/console/api-keys) |
+| **豆包** | `https://ark.cn-beijing.volces.com/api/v3` | `doubao-pro-32k` | [火山引擎](https://console.volcengine.com/ark) |
+| **Gemini** | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.0-flash` | [Google AI Studio](https://aistudio.google.com/apikey) |
+| **硅基流动** | `https://api.siliconflow.cn/v1` | `deepseek-ai/DeepSeek-V3` | [siliconflow.cn](https://cloud.siliconflow.cn/account/ak) |
+| **Ollama** | `http://localhost:11434/v1` | `qwen2.5:7b` | 本地运行，无需 Key |
+
+### 配置方式
+
+**方式一：Web UI（推荐）** — 设置页面 → AI 助手配置 → 选择提供商 → 填入 Key → 保存
+
+**方式二：.env 文件**
+
+```env
+AI_ENABLED=true
+AI_API_URL=https://api.deepseek.com/v1
+AI_API_KEY=sk-your-key-here
+AI_MODEL=deepseek-chat
+```
+
+### AI 功能列表
+
+配置启用后，在聊天页面解锁：
+- **AI 对话摘要** — 一键生成最近 50 条消息要点总结
+- **情感分析** — 分析对话整体情感倾向和关键词
+- **情感趋势图** — 按时间段展示情感变化趋势
+- **AI 智能搜索** — 自然语言搜索（如"上周和小王聊的项目"）
+
 ## MCP 工具
 
 | 工具 | 说明 |
