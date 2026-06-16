@@ -5,8 +5,10 @@
 ## 功能特性
 
 - **一键解密** — Web 向导引导完成密钥提取 + 数据库解密，无需手动操作
+- **零 Python 依赖** — 密钥提取、数据库解密、图片解密全部使用 Node.js 原生实现（koffi + crypto）
 - **MCP Server** — 作为 AI 工具的 MCP 服务端，支持查询会话、消息、联系人、统计等 14 个工具
 - **Web UI** — 内置中文 Web 界面，支持聊天浏览、通讯录、全局搜索、数据统计
+- **公众号支持** — 公众号/服务号会话聚合分组，文章应用内打开，图片防盗链代理
 - **多媒体支持** — 图片(缩略图+原图)、视频流播放、表情三级 fallback、语音转文字
 - **数据分析** — 全局统计仪表板 + 单会话统计面板(热力图/词云/成员排行/聊天画像)
 - **导出** — 支持 JSON / TXT / HTML 格式导出聊天记录
@@ -17,40 +19,43 @@
 
 - **OS**: Windows
 - **Node.js**: >= 18
-- **Python**: >= 3.10
 - **微信**: PC 版 4.x (Weixin.exe)
+- **Python**（可选）: >= 3.10，仅 wxgf 原图转换需要（系统已安装 ffmpeg 则完全不需要）
 
 ## 快速开始
 
-### 1. 安装依赖
+### 1. 克隆并安装
 
 ```bash
+git clone https://gitee.com/wyler_admin/wechat-cli.git
+cd wechat-cli
 npm install
-
-pip install pycryptodome pillow-heif Pillow av
+npm run build
 ```
+
+无需安装 Python 或任何原生编译工具。所有核心功能（密钥提取、数据库解密、图片解密）均使用 Node.js 原生实现。
 
 ### 2. 启动 Web UI
 
 ```bash
-npm start
+npm run start:web
 ```
 
 浏览器打开 `http://localhost:5200`，按向导操作：
 
-1. **提取密钥** — 确保微信正在运行，点击按钮自动提取
-2. **解密数据库** — 点击按钮解密所有数据库
-3. **浏览数据** — 自动加载聊天记录
+1. **配置路径** — 设置微信数据库源路径（`db_storage` 目录）
+2. **提取密钥** — 确保微信正在运行，点击按钮自动提取
+3. **解密数据库** — 点击按钮解密所有数据库
+4. **浏览数据** — 自动加载聊天记录
 
-### 3. 其他启动方式
+### 3. MCP 模式（供 AI 工具调用）
 
 ```bash
-# MCP 模式（供 AI 工具调用）
-npm run dev
-
-# 构建
 npm run build
+npm start
 ```
+
+在 Claude Desktop / Cursor 等 MCP 客户端中配置（见下方 [MCP 工具](#mcp-工具) 章节）。
 
 ## API 接口
 
@@ -138,37 +143,39 @@ npm run build
 
 ```
 wechat-cli/
-├── python/
-│   ├── extract_key_v3.py      # 密钥提取
-│   ├── decrypt_db_v2.py       # 数据库解密
-│   ├── decrypt_image.py       # 图片解密 & 密钥扫描
-│   ├── convert_wxgf.py        # wxgf(HEVC)转JPEG
-│   └── image_key.txt          # 图片密钥(运行时生成)
+├── python/                        # Python 脚本（仅 wxgf fallback 需要）
+│   ├── extract_key_v3.py           # 密钥提取（Python 版，备用）
+│   ├── decrypt_db_v2.py            # 数据库解密（Python 版，备用）
+│   ├── decrypt_image.py            # 图片解密 & 密钥扫描（Python 版，备用）
+│   └── convert_wxgf.py             # wxgf(HEVC)转JPEG（Python fallback）
 ├── src/
-│   ├── index.ts               # 入口：MCP / Web 双模式
-│   ├── config.ts              # 配置管理(.env 持久化)
+│   ├── index.ts                    # 入口：MCP / Web 双模式
+│   ├── config.ts                   # 配置管理(.env 持久化)
 │   ├── db/
-│   │   ├── manager.ts         # 数据库连接、分片索引
-│   │   ├── models.ts          # 类型定义
-│   │   ├── codec.ts           # Zstd 解码
-│   │   ├── query-contacts.ts  # 联系人 & 会话 & 群成员查询
-│   │   ├── query-messages.ts  # 消息查询 & 搜索
-│   │   ├── query-search.ts    # 全局搜索
-│   │   ├── stats.ts           # 统计数据
-│   │   ├── message-parser.ts  # 消息解析 & 分词
-│   │   └── recall-store.ts    # 防撤回：内存缓冲 + 持久化
+│   │   ├── manager.ts              # 数据库连接、分片索引
+│   │   ├── db-decrypt.ts           # Node.js 原生数据库解密 (AES-256-CBC)
+│   │   ├── key-extractor.ts        # Node.js 原生密钥提取 (koffi FFI)
+│   │   ├── models.ts               # 类型定义
+│   │   ├── codec.ts                # Zstd 解码
+│   │   ├── query-contacts.ts       # 联系人 & 会话 & 群成员查询
+│   │   ├── query-messages.ts       # 消息查询 & 搜索
+│   │   ├── query-search.ts         # 全局搜索
+│   │   ├── stats.ts                # 统计数据
+│   │   ├── message-parser.ts       # 消息解析 & 分词
+│   │   └── recall-store.ts         # 防撤回：内存缓冲 + 持久化
+│   ├── win/
+│   │   └── memory-reader.ts        # Windows API 封装 (koffi: ReadProcessMemory)
 │   ├── server/
-│   │   ├── api.ts             # Hono REST API
-│   │   ├── image.ts           # 图片/视频解析 & wxgf 转换
-│   │   └── refresh.ts         # 数据刷新逻辑
-│   ├── python/
-│   │   └── runner.ts          # Python 调用封装
+│   │   ├── api.ts                  # Hono REST API
+│   │   ├── image.ts                # 图片/视频解析 & 解密 & wxgf 转换
+│   │   └── refresh.ts              # 数据刷新逻辑
 │   ├── tools/
-│   │   └── handlers.ts        # MCP 工具处理
+│   │   └── handlers.ts             # MCP 工具处理
 │   └── web/
-│       ├── index.html          # Web UI (中文 SPA)
-│       └── assets/style.css    # 样式
-├── CLAUDE.md                   # 项目指引
+│       ├── index.html              # Web UI (中文 SPA)
+│       └── assets/style.css        # 样式
+├── .env.example                    # 环境变量示例
+├── CLAUDE.md                       # 项目指引
 ├── package.json
 ├── tsconfig.json
 └── LICENSE

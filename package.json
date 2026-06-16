@@ -12,8 +12,7 @@
     "python/",
     "src/web/",
     "README.md",
-    "LICENSE",
-    "CLAUDE.md"
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc",
@@ -24,7 +23,8 @@
     "inspector": "npx @modelcontextprotocol/inspector tsx src/index.ts",
     "lint": "eslint src/",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "wechat",
