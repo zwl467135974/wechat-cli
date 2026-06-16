@@ -30,6 +30,7 @@ import { getMediaFiles } from "../db/query-media.js";
 import type { EmojiItem } from "../db/query-emoji.js";
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const app = new Hono();
@@ -41,7 +42,9 @@ const AUTH_TOKEN = process.env.AUTH_TOKEN || "";
 app.use("/api/*", async (c, next) => {
   if (!AUTH_TOKEN) return await next();
   const token = c.req.header("Authorization")?.replace("Bearer ", "") || c.req.query("token") || "";
-  if (token !== AUTH_TOKEN) {
+  const a = Buffer.from(token);
+  const b = Buffer.from(AUTH_TOKEN);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
     return c.json({ error: "Unauthorized" }, 401);
   }
   await next();

@@ -7,6 +7,14 @@
   "bin": {
     "wechat-cli": "dist/index.js"
   },
+  "files": [
+    "dist/",
+    "python/",
+    "src/web/",
+    "README.md",
+    "LICENSE",
+    "CLAUDE.md"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx --watch src/index.ts",
@@ -21,10 +29,24 @@
   "keywords": [
     "wechat",
     "mcp",
-    "ai"
+    "ai",
+    "chat-history",
+    "sqlite",
+    "model-context-protocol"
   ],
-  "author": "",
+  "author": "wyler",
   "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://gitee.com/wyler_admin/wechat-cli.git"
+  },
+  "homepage": "https://gitee.com/wyler_admin/wechat-cli",
+  "bugs": {
+    "url": "https://gitee.com/wyler_admin/wechat-cli/issues"
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.9.2",

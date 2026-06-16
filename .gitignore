@@ -34,7 +34,10 @@ server_out.txt
 .playwright-mcp/
 test-error.txt
 test-output.txt
+debug-*.txt
+test-*.mjs
 
 *.log
 .env
 .env.*
+!.env.example
