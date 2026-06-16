@@ -152,7 +152,18 @@ function proxyImgUrl(url) {
 }
 
 function linkifyText(s) {
-  return escapeHtml(s).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:var(--accent);word-break:break-all">$1</a>');
+  var links = [];
+  s = s.replace(/<a\s+href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, function(_m, url, text) {
+    links.push({ url: url, text: text.trim() });
+    return '\x01LINK' + (links.length - 1) + '\x01';
+  });
+  var html = escapeHtml(s);
+  html = html.replace(/(https?:\/\/[^\s<\x01]+)/g, '<a href="$1" class="article-open" data-url="$1" target="_blank" rel="noopener" style="color:var(--accent);word-break:break-all">$1</a>');
+  html = html.replace(/\x01LINK(\d+)\x01/g, function(_m, idx) {
+    var link = links[parseInt(idx)];
+    return '<a href="' + escapeHtml(link.url) + '" class="article-open" data-url="' + escapeHtml(link.url) + '" target="_blank" rel="noopener" style="color:var(--accent);word-break:break-all">' + escapeHtml(link.text) + '</a>';
+  });
+  return html;
 }
 
 function escapeRegex(s) {
