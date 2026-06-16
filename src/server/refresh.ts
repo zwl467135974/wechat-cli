@@ -5,14 +5,7 @@ import { closeAll } from "../db/manager.js";
 import { clearShardCache } from "../db/query-messages.js";
 import { clearSelfCache } from "../db/message-parser.js";
 import { saveAllBeforeRefresh } from "../db/recall-store.js";
-import { execPython } from "../python/runner.js";
-
-async function runDecrypt(dbDir: string, outDir: string): Promise<string> {
-  return execPython("decrypt_db_v2.py", {
-    db_dir: dbDir,
-    out_dir: outDir,
-  });
-}
+import { decryptAllDatabases } from "../db/db-decrypt.js";
 
 declare global {
   var __wechatLastRefresh: string | undefined;
@@ -31,10 +24,15 @@ export async function doRefresh(): Promise<{ ok: boolean; error?: string }> {
     if (!cfg.wechatDbSrcPath) return { ok: false, error: "未配置微信数据库路径" };
     const absOutDir = path.resolve(cfg.dataDir);
     if (!fs.existsSync(absOutDir)) fs.mkdirSync(absOutDir, { recursive: true });
-    await runDecrypt(cfg.wechatDbSrcPath, absOutDir);
+
+    const result = decryptAllDatabases(cfg.wechatDbSrcPath, absOutDir);
+    if (result.success === 0 && result.failed > 0) {
+      return { ok: false, error: result.details.join("\n") };
+    }
+
     const ts = new Date().toISOString();
     globalThis.__wechatLastRefresh = ts;
-    console.log(`[${ts}] Refresh completed`);
+    console.log(`[${ts}] Refresh completed: ${result.success} ok, ${result.failed} fail, ${result.skipped} skip`);
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

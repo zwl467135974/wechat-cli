@@ -9,7 +9,8 @@ import {
 } from "../db/query-messages.js";
 import { getGlobalStats, getChatStats, getKeywordTrend, getYearTopWords, getGroupMonthlyRanking } from "../db/stats.js";
 import { closeAll, findFilesByType } from "../db/manager.js";
-import { execPython } from "../python/runner.js";
+import { decryptAllDatabases } from "../db/db-decrypt.js";
+import { extractDbKeys } from "../db/key-extractor.js";
 import { getConfig, saveEnvFile } from "../config.js";
 import {
   resolveImagePath,
@@ -135,16 +136,12 @@ app.post("/api/decrypt", async (c) => {
   const config = getConfig();
   const body = await c.req.json().catch(() => ({} as Record<string, string>));
   if (body.src_path) config.wechatDbSrcPath = body.src_path;
-  if (body.key) config.wechatDbKey = body.key;
   if (!config.wechatDbSrcPath) {
     return c.json({ error: "WeChat data path not configured" }, 400);
   }
   const outDir = config.dataDir;
 
-  const result = await execPython("decrypt_db_v2.py", {
-    db_dir: config.wechatDbSrcPath,
-    out_dir: outDir,
-  });
+  const result = decryptAllDatabases(config.wechatDbSrcPath, outDir);
   closeAll();
   clearShardCache();
   statsCache = null;
@@ -154,8 +151,15 @@ app.post("/api/decrypt", async (c) => {
 });
 
 app.post("/api/extract-key", async (c) => {
-  const result = await execPython("extract_key_v3.py", {});
-  return c.json({ result });
+  const config = getConfig();
+  if (!config.wechatDbSrcPath) {
+    return c.json({ error: "WeChat data path not configured" }, 400);
+  }
+  const result = extractDbKeys(config.wechatDbSrcPath);
+  const keysFile = path.join(process.cwd(), "python", "all_keys.json");
+  fs.mkdirSync(path.dirname(keysFile), { recursive: true });
+  fs.writeFileSync(keysFile, JSON.stringify(result.keys, null, 2));
+  return c.json({ result: result.details.join("\n") });
 });
 
 app.get("/api/sessions", async (c) => {

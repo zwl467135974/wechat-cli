@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
@@ -6,6 +7,15 @@ import os from "node:os";
 const PYTHON_DIR = path.join(path.dirname(import.meta.url.replace("file:///", "").replace("file://", "")), "..", "..", "python");
 
 let cachedKey: { key: string; xor_key: number } | null = null;
+
+const SIG_V2 = Buffer.from([0x07, 0x08, 0x56, 0x32, 0x08, 0x07]);
+const SIG_V1 = Buffer.from([0x07, 0x08, 0x56, 0x31, 0x08, 0x07]);
+const KNOWN_HEADERS: Buffer[] = [
+  Buffer.from([0xff, 0xd8, 0xff]),
+  Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+  Buffer.from([0x47, 0x49, 0x46, 0x38]),
+  Buffer.from([0x52, 0x49, 0x46, 0x46]),
+];
 
 export function detectMime(buf: Buffer): string {
   if (buf.length < 4) return "application/octet-stream";
@@ -118,59 +128,150 @@ export function resolveVideoPath(
   return null;
 }
 
+function decryptV2Dat(data: Buffer, aesKey: string, xorKey: number): Buffer | null {
+  if (data.length < 15) return null;
+
+  const sig = data.subarray(0, 6);
+  if (!sig.equals(SIG_V2) && !sig.equals(SIG_V1)) return null;
+
+  const aesSize = data.readUInt32LE(6);
+  const xorSize = data.readUInt32LE(10);
+
+  const fileData = data.subarray(15);
+  const alignedAesSize = aesSize + (16 - (aesSize % 16));
+
+  if (alignedAesSize > fileData.length) return null;
+
+  const keyBytes = Buffer.from(aesKey.substring(0, 16), "ascii");
+  if (keyBytes.length < 16) return null;
+
+  const aesPart = fileData.subarray(0, alignedAesSize);
+  const decipher = crypto.createDecipheriv("aes-128-ecb", keyBytes, null);
+  decipher.setAutoPadding(false);
+  const decRaw = Buffer.concat([decipher.update(aesPart), decipher.final()]);
+
+  const padLen = decRaw[decRaw.length - 1];
+  let decAes: Buffer;
+  if (padLen > 0 && padLen <= 16) {
+    let valid = true;
+    for (let i = decRaw.length - padLen; i < decRaw.length; i++) {
+      if (decRaw[i] !== padLen) { valid = false; break; }
+    }
+    decAes = valid ? decRaw.subarray(0, decRaw.length - padLen) : decRaw;
+  } else {
+    decAes = decRaw;
+  }
+
+  const remaining = fileData.subarray(alignedAesSize);
+  if (remaining.length < xorSize) return null;
+  const rawLen = remaining.length - xorSize;
+  const rawData = remaining.subarray(0, rawLen);
+  const xorData = Buffer.from(remaining.subarray(rawLen));
+  for (let i = 0; i < xorData.length; i++) xorData[i] ^= xorKey;
+
+  return Buffer.concat([decAes, rawData, xorData]);
+}
+
+function decryptSimpleXor(data: Buffer): Buffer | null {
+  for (const header of KNOWN_HEADERS) {
+    const candidate = data[0] ^ header[0];
+    let match = true;
+    for (let i = 1; i < header.length; i++) {
+      if ((data[i] ^ candidate) !== header[i]) { match = false; break; }
+    }
+    if (match) {
+      const result = Buffer.from(data);
+      for (let i = 0; i < result.length; i++) result[i] ^= candidate;
+      return result;
+    }
+  }
+  return null;
+}
+
 export async function decryptImage(datPath: string): Promise<Buffer | null> {
   const key = loadKey();
-  if (!key) return null;
+  let data: Buffer;
+  try {
+    data = fs.readFileSync(datPath);
+  } catch {
+    return null;
+  }
 
-  return new Promise((resolve) => {
-    const scriptPath = path.join(PYTHON_DIR, "decrypt_image.py");
-    const proc = spawn("python", [scriptPath, "decrypt", datPath, key.key, String(key.xor_key)], {
-      cwd: PYTHON_DIR,
-    });
+  if (key) {
+    const v2Result = decryptV2Dat(data, key.key, key.xor_key);
+    if (v2Result) return v2Result;
+  }
 
-    const chunks: Buffer[] = [];
-    proc.stdout.on("data", (d: Buffer) => chunks.push(d));
-    proc.stderr.on("data", () => {});
+  return decryptSimpleXor(data);
+}
 
-    proc.on("close", (code) => {
-      if (code === 0 && chunks.length > 0) {
-        resolve(Buffer.concat(chunks));
-      } else {
-        resolve(null);
+export function deriveXorKey(attachBase: string): number | null {
+  const pairs: Array<[number, number]> = [];
+
+  function scan(dir: string) {
+    if (pairs.length >= 20) return;
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (pairs.length >= 20) return;
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        scan(fullPath);
+      } else if (entry.name.endsWith("_t.dat")) {
+        try {
+          const fdata = fs.readFileSync(fullPath);
+          if (fdata.length >= 2) {
+            pairs.push([fdata[fdata.length - 2], fdata[fdata.length - 1]]);
+          }
+        } catch { /* skip */ }
       }
-    });
+    }
+  }
+  scan(attachBase);
 
-    proc.on("error", () => resolve(null));
-  });
+  if (pairs.length === 0) return null;
+
+  const counter = new Map<string, number>();
+  for (const [b0, b1] of pairs) {
+    const k = `${b0},${b1}`;
+    counter.set(k, (counter.get(k) || 0) + 1);
+  }
+
+  let best: [number, number] | null = null;
+  let bestCount = 0;
+  for (const [k, count] of counter) {
+    if (count > bestCount) {
+      bestCount = count;
+      const parts = k.split(",");
+      best = [parseInt(parts[0]), parseInt(parts[1])];
+    }
+  }
+
+  if (!best) return null;
+  const xorFF = best[0] ^ 0xff;
+  const xorD9 = best[1] ^ 0xd9;
+  return xorFF === xorD9 ? xorFF : null;
 }
 
 export async function scanImageKey(): Promise<{ key: string; xor_key: number } | null> {
-  return new Promise((resolve) => {
-    const scriptPath = path.join(PYTHON_DIR, "decrypt_image.py");
-    const proc = spawn("python", [scriptPath, "find-key"], {
-      cwd: PYTHON_DIR,
-    });
+  const config = (await import("../config.js")).getConfig();
+  if (!config.wechatDbSrcPath) return null;
 
-    let stdout = "";
-    proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
-    proc.stderr.on("data", () => {});
+  const srcRoot = path.dirname(config.wechatDbSrcPath);
+  const attachBase = path.join(srcRoot, "msg", "attach");
 
-    proc.on("close", (code) => {
-      if (code === 0 && stdout.trim()) {
-        try {
-          const result = JSON.parse(stdout.trim());
-          cachedKey = result;
-          resolve(result);
-        } catch {
-          resolve(null);
-        }
-      } else {
-        resolve(null);
-      }
-    });
-
-    proc.on("error", () => resolve(null));
-  });
+  try {
+    const { extractImageKey } = await import("../db/key-extractor.js");
+    const result = extractImageKey(attachBase);
+    if (result) {
+      cachedKey = result;
+      const keyFile = path.join(PYTHON_DIR, "image_key.txt");
+      try { fs.writeFileSync(keyFile, JSON.stringify(result)); } catch { /* ignore */ }
+    }
+    return result;
+  } catch {
+    return null;
+  }
 }
 
 export function getImageKeyStatus(): { available: boolean; key?: string } {

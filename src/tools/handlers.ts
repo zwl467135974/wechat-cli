@@ -2,13 +2,16 @@ import { getSessions, getContacts, getChatRoomMembers } from "../db/query-contac
 import { getMessages, searchMessages, getTimeline } from "../db/query-messages.js";
 import { getGlobalStats, getChatStats, getKeywordTrend, getYearTopWords } from "../db/stats.js";
 import { closeAll } from "../db/manager.js";
+import { decryptAllDatabases } from "../db/db-decrypt.js";
+import { extractDbKeys } from "../db/key-extractor.js";
 import { getConfig } from "../config.js";
-import { execPython } from "../python/runner.js";
 import { doRefresh } from "../server/refresh.js";
 import { buildExportHtml, buildYearReport } from "../server/api.js";
 import { getEmojis } from "../db/query-emoji.js";
 import type { EmojiItem } from "../db/query-emoji.js";
 import type { Message } from "../db/models.js";
+import fs from "node:fs";
+import path from "node:path";
 
 export async function handleToolCall(
   name: string,
@@ -19,35 +22,30 @@ export async function handleToolCall(
   try {
     switch (name) {
       case "decrypt_database": {
-        const { src_path, key, out_dir } = args as {
-          src_path?: string;
-          key?: string;
-          out_dir?: string;
-        };
+        const { out_dir } = args as { out_dir?: string };
         const outputDir = out_dir || config.dataDir;
-        const dbDir = src_path || config.wechatDbSrcPath;
-        const result = await execPython("decrypt_db_v2.py", {
-          db_dir: dbDir,
-          out_dir: outputDir,
-          ...(key ? { key } : {}),
-        });
+        const dbDir = config.wechatDbSrcPath;
+        if (!dbDir) {
+          return { content: [{ type: "text", text: "未配置微信数据库路径" }] };
+        }
+        const result = decryptAllDatabases(dbDir, outputDir);
         closeAll();
         return {
-          content: [{ type: "text", text: result }],
+          content: [{ type: "text", text: `解密完成: ${result.success} 成功, ${result.failed} 失败, ${result.skipped} 跳过\n\n${result.details.join("\n")}` }],
         };
       }
 
       case "extract_db_key": {
-        const { dll_path, wechat_path } = args as {
-          dll_path?: string;
-          wechat_path?: string;
-        };
-        const result = await execPython("extract_key_v3.py", {
-          ...(dll_path ? { dll_path } : {}),
-          ...(wechat_path ? { wechat_path } : {}),
-        });
+        const dbDir = config.wechatDbSrcPath;
+        if (!dbDir) {
+          return { content: [{ type: "text", text: "未配置微信数据库路径" }] };
+        }
+        const result = extractDbKeys(dbDir);
+        const keysFile = path.join(process.cwd(), "python", "all_keys.json");
+        fs.mkdirSync(path.dirname(keysFile), { recursive: true });
+        fs.writeFileSync(keysFile, JSON.stringify(result.keys, null, 2));
         return {
-          content: [{ type: "text", text: result }],
+          content: [{ type: "text", text: result.details.join("\n") }],
         };
       }
 
