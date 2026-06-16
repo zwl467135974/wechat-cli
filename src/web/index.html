@@ -262,7 +262,7 @@ function renderMessageContent(msg) {
 
     if (isArticles) {
       const articlesHtml = msg.appArticles.map((a, i) => {
-        const articleLink = a.url ? `<a class="article-link" href="${escapeHtml(a.url)}" target="_blank" rel="noopener">` : '<span class="article-link">';
+        const articleLink = a.url ? `<a class="article-link article-open" data-url="${escapeHtml(a.url)}" href="${escapeHtml(a.url)}" target="_blank" rel="noopener">` : '<span class="article-link">';
         const articleClose = a.url ? '</a>' : '</span>';
         const thumb = a.thumbUrl ? `<img class="article-list-thumb" src="${a.thumbUrl}" loading="lazy" onerror="this.remove()">` : '';
         const desc = a.description ? `<div class="article-list-desc">${escapeHtml(a.description.substring(0, 80))}${a.description.length > 80 ? '...' : ''}</div>` : '';
@@ -272,7 +272,7 @@ function renderMessageContent(msg) {
 
     } else if (isReply) {
       const refHtml = `<div class="refer-block" onclick="scrollToRefMsg(this)" data-ref-content="${escapeHtml(msg.referContent || '')}" data-ref-time="${escapeHtml(msg.time)}">▎${escapeHtml(msg.referSender || '')}: ${escapeHtml((msg.referContent || '').substring(0, 100))}</div>`;
-      const replyTitle = msg.appUrl ? `<a class="app-link" href="${escapeHtml(msg.appUrl)}" target="_blank" rel="noopener">${escapeHtml(msg.content)}</a>` : `<span>${escapeHtml(msg.content)}</span>`;
+      const replyTitle = msg.appUrl ? `<a class="app-link article-open" data-url="${escapeHtml(msg.appUrl)}" href="${escapeHtml(msg.appUrl)}" target="_blank" rel="noopener">${escapeHtml(msg.content)}</a>` : `<span>${escapeHtml(msg.content)}</span>`;
       bubble = `<div class="message-bubble app-bubble">${refHtml}<div class="app-title">${replyTitle}</div></div>`;
 
     } else if (isFile) {
@@ -288,7 +288,7 @@ function renderMessageContent(msg) {
       const title = msg.appDescription ? msg.content.split('\n')[0] : msg.content;
       const desc = msg.appDescription || '';
       const author = msg.appAuthor || '';
-      const link = msg.appUrl ? `<a class="app-link" href="${escapeHtml(msg.appUrl)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : `<span>${escapeHtml(title)}</span>`;
+      const link = msg.appUrl ? `<a class="app-link article-open" data-url="${escapeHtml(msg.appUrl)}" href="${escapeHtml(msg.appUrl)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : `<span>${escapeHtml(title)}</span>`;
       const thumb = msg.appThumbUrl ? `<img class="app-thumb" src="${msg.appThumbUrl}" loading="lazy" onerror="this.remove()">` : '';
       const authorHtml = author ? `<div class="app-author">${escapeHtml(author)}</div>` : '';
       const descHtml = desc ? `<div class="app-desc">${escapeHtml(desc.substring(0, 200))}${desc.length > 200 ? '...' : ''}</div>` : '';
@@ -298,7 +298,7 @@ function renderMessageContent(msg) {
       const lines = msg.content.split('\n');
       const title = lines[0] || '[应用消息]';
       const desc = msg.appDescription || lines.slice(1).join('\n');
-      const link = msg.appUrl ? `<a class="app-link" href="${escapeHtml(msg.appUrl)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : `<span>${escapeHtml(title)}</span>`;
+      const link = msg.appUrl ? `<a class="app-link article-open" data-url="${escapeHtml(msg.appUrl)}" href="${escapeHtml(msg.appUrl)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : `<span>${escapeHtml(title)}</span>`;
       const thumb = msg.appThumbUrl ? `<img class="app-thumb" src="${msg.appThumbUrl}" loading="lazy" onerror="this.remove()">` : '';
       const descHtml = desc ? `<div class="app-desc">${escapeHtml(desc.substring(0, 200))}${desc.length > 200 ? '...' : ''}</div>` : '';
       bubble = `<div class="message-bubble app-bubble">${thumb}<div class="app-title">${link}</div>${descHtml}</div>`;
@@ -971,6 +971,59 @@ document.addEventListener('click', function(e) {
     menu.style.display = 'none';
   }
 });
+
+document.addEventListener('click', function(e) {
+  const link = e.target.closest('a.article-open');
+  if (link) {
+    e.preventDefault();
+    const url = link.dataset.url || link.getAttribute('href');
+    if (url) openArticle(url);
+  }
+});
+
+window.openArticle = function(url) {
+  if (!url) return;
+  const existing = document.querySelector('.article-viewer-overlay');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'article-viewer-overlay';
+  overlay.innerHTML = `
+    <div class="article-viewer-bar">
+      <span class="article-viewer-title">加载中...</span>
+      <div class="article-viewer-actions">
+        <a class="article-viewer-ext" href="${escapeHtml(url)}" target="_blank" rel="noopener">外部打开</a>
+        <button class="article-viewer-close" type="button">&times;</button>
+      </div>
+    </div>
+    <div class="article-viewer-body">
+      <div class="article-viewer-loading"><div class="loading-spinner"></div></div>
+      <iframe class="article-viewer-frame" src="${API}/api/article-proxy?url=${encodeURIComponent(url)}"></iframe>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.body.style.overflow = 'hidden';
+
+  const frame = overlay.querySelector('.article-viewer-frame');
+  const loading = overlay.querySelector('.article-viewer-loading');
+  frame.style.visibility = 'hidden';
+  frame.onload = () => {
+    loading.style.display = 'none';
+    frame.style.visibility = 'visible';
+    try {
+      const title = frame.contentWindow.document.title;
+      if (title) overlay.querySelector('.article-viewer-title').textContent = title;
+    } catch (_e) {}
+  };
+
+  const close = () => {
+    overlay.remove();
+    document.body.style.overflow = '';
+    document.removeEventListener('keydown', onKey);
+  };
+  overlay.querySelector('.article-viewer-close').onclick = close;
+  overlay.onclick = (e) => { if (e.target === overlay) close(); };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+};
 
 window.scrollToRefMsg = function(el) {
   const refContent = el.dataset.refContent || '';

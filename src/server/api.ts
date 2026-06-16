@@ -586,6 +586,95 @@ app.get("/api/file", async (c) => {
   });
 });
 
+const WECHAT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13) XWEB/14915";
+
+function isPrivateUrl(urlStr: string): boolean {
+  try {
+    const u = new URL(urlStr);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return true;
+    const h = u.hostname;
+    if (h === "localhost" || h === "127.0.0.1" || h === "0.0.0.0" || h === "::1") return true;
+    if (/^(10|127)\./.test(h)) return true;
+    if (/^192\.168\./.test(h)) return true;
+    if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(h)) return true;
+    if (/^169\.254\./.test(h)) return true;
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+app.get("/api/article-proxy", async (c) => {
+  const url = c.req.query("url");
+  if (!url) return c.json({ error: "url required" }, 400);
+  if (isPrivateUrl(url)) return c.json({ error: "url blocked" }, 403);
+
+  let resp: Response;
+  try {
+    resp = await fetch(url, {
+      headers: {
+        "User-Agent": WECHAT_UA,
+        "Referer": "https://mp.weixin.qq.com/",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+      },
+      redirect: "follow",
+    });
+  } catch {
+    return c.json({ error: "fetch failed" }, 502);
+  }
+  if (!resp.ok) return c.json({ error: `upstream ${resp.status}` }, 502);
+
+  let html = await resp.text();
+
+  html = html.replace(/((?:data-src|src)\s*=\s*["'])(https?:\/\/mmbiz[^"']+)/gi, (_m, prefix: string, imgUrl: string) =>
+    `${prefix}/api/img-proxy?url=${encodeURIComponent(imgUrl)}`
+  );
+
+  const inject = `<script>(function(){
+function p(i){['src','data-src'].forEach(function(a){var v=i.getAttribute(a);if(v&&v.indexOf('mmbiz')>-1&&v.indexOf('img-proxy')<0){i.setAttribute(a,'/api/img-proxy?url='+encodeURIComponent(v));}});}
+try{document.querySelectorAll('img').forEach(p);}catch(e){}
+new MutationObserver(function(ms){ms.forEach(function(m){m.addedNodes.forEach(function(n){if(n.nodeName==='IMG'){p(n);}else if(n.querySelectorAll){try{n.querySelectorAll('img').forEach(p);}catch(e){}}});});});}).observe(document.documentElement,{childList:true,subtree:true});
+})();</script>`;
+
+  if (html.includes("</body>")) {
+    html = html.replace("</body>", inject + "</body>");
+  } else {
+    html += inject;
+  }
+
+  return c.html(html);
+});
+
+app.get("/api/img-proxy", async (c) => {
+  const url = c.req.query("url");
+  if (!url) return c.json({ error: "url required" }, 400);
+  if (isPrivateUrl(url)) return c.json({ error: "url blocked" }, 403);
+
+  let resp: Response;
+  try {
+    resp = await fetch(url, {
+      headers: {
+        "User-Agent": WECHAT_UA,
+        "Referer": "https://mp.weixin.qq.com/",
+        "Accept": "image/*,*/*;q=0.8",
+      },
+    });
+  } catch {
+    return c.json({ error: "fetch failed" }, 502);
+  }
+  if (!resp.ok) return c.json({ error: `upstream ${resp.status}` }, 502);
+
+  const contentType = resp.headers.get("content-type") || "image/jpeg";
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  return new Response(new Uint8Array(buffer), {
+    headers: {
+      "Content-Type": contentType,
+      "Cache-Control": "public, max-age=86400",
+    },
+  });
+});
+
 app.post("/api/scan-image-key", async (c) => {
   const result = await scanImageKey();
   if (result) {
