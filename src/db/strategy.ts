@@ -14,7 +14,7 @@ export interface FileMeta {
 }
 
 const V4_PATTERNS: Array<{ type: GroupType; re: RegExp }> = [
-  { type: "message", re: /^message(_[0-9]{1,2})?\.db$/i },
+  { type: "message", re: /^(biz_)?message(_[0-9]{1,2})?\.db$/i },
   { type: "contact", re: /^contact\.db$/i },
   { type: "session", re: /^session\.db$/i },
   { type: "image", re: /^hardlink\.db$/i },

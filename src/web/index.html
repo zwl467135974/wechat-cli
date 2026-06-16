@@ -254,19 +254,55 @@ function renderMessageContent(msg) {
   } else if (msg.type === 48) {
     bubble = `<div class="message-bubble location-bubble"><span class="media-icon">&#128205;</span> <span>${escapeHtml(msg.content)}</span></div>`;
   } else if (msg.type === 49) {
-    const lines = msg.content.split('\n');
-    const title = lines[0] || '[应用消息]';
-    const desc = lines.slice(1).join('\n');
     const isReply = msg.appType === 57 && msg.referContent;
     const isFile = msg.appType === 6 && msg.mediaPath;
-    const isMerged = msg.subMessages && msg.subMessages.length > 0;
-    const fileLink = isFile ? `<a href="${API}/api/file?path=${encodeURIComponent(msg.mediaPath)}" target="_blank" class="file-link">[文件] ${escapeHtml(title)}</a>` : '';
-    const link = isFile ? fileLink : (msg.appUrl && msg.appType !== 57 ? `<a class="app-link" href="${escapeHtml(msg.appUrl)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : `<span>${escapeHtml(title)}</span>`);
-    const thumb = msg.appThumbUrl ? `<img class="app-thumb" src="${msg.appThumbUrl}" loading="lazy" onerror="this.remove()">` : '';
-    const refHtml = isReply ? `<div class="refer-block" onclick="scrollToRefMsg(this)" data-ref-content="${escapeHtml(msg.referContent || '')}" data-ref-time="${escapeHtml(msg.time)}">▎${escapeHtml(msg.referSender || '')}: ${escapeHtml((msg.referContent || '').substring(0, 100))}</div>` : '';
-    const mergedHtml = isMerged ? `<div class="merged-msgs collapsed" data-seq="${msg.seq}">${msg.subMessages.map(s => `<div class="merged-item">${escapeHtml(s)}</div>`).join('')}<div style="display:flex;gap:4px;margin-top:4px"><button class="merged-toggle" onclick="toggleMerged(this)">${msg.subMessages.length > 10 ? '展开全部 ' + msg.subMessages.length + ' 条' : '展开'}</button><button class="merged-toggle" onclick="showMergedPopup(this)">弹窗查看</button></div></div>` : '';
-    const descHtml = !isMerged && desc && !isReply && !isFile ? `<div class="app-desc">${escapeHtml(desc.substring(0, 200))}${desc.length > 200 ? '...' : ''}</div>` : '';
-    bubble = `<div class="message-bubble app-bubble">${thumb}${refHtml}<div class="app-title">${link}</div>${descHtml}${mergedHtml}</div>`;
+    const isArticles = msg.appArticles && msg.appArticles.length > 1;
+    const isOfficialArticle = (msg.appType === 5 || msg.appType === 33 || msg.appType === 36) && msg.appUrl;
+    const isMerged = !isArticles && msg.subMessages && msg.subMessages.length > 0 && msg.appType === 19;
+
+    if (isArticles) {
+      const articlesHtml = msg.appArticles.map((a, i) => {
+        const articleLink = a.url ? `<a class="article-link" href="${escapeHtml(a.url)}" target="_blank" rel="noopener">` : '<span class="article-link">';
+        const articleClose = a.url ? '</a>' : '</span>';
+        const thumb = a.thumbUrl ? `<img class="article-list-thumb" src="${a.thumbUrl}" loading="lazy" onerror="this.remove()">` : '';
+        const desc = a.description ? `<div class="article-list-desc">${escapeHtml(a.description.substring(0, 80))}${a.description.length > 80 ? '...' : ''}</div>` : '';
+        return `<div class="article-list-item">${articleLink}${thumb}<div class="article-list-body"><div class="article-list-title">${escapeHtml(a.title)}</div>${desc}</div>${articleClose}</div>`;
+      }).join('');
+      bubble = `<div class="message-bubble app-bubble articles-bubble"><div class="articles-header">${escapeHtml(msg.content.split('\n')[0])}</div>${articlesHtml}</div>`;
+
+    } else if (isReply) {
+      const refHtml = `<div class="refer-block" onclick="scrollToRefMsg(this)" data-ref-content="${escapeHtml(msg.referContent || '')}" data-ref-time="${escapeHtml(msg.time)}">▎${escapeHtml(msg.referSender || '')}: ${escapeHtml((msg.referContent || '').substring(0, 100))}</div>`;
+      const replyTitle = msg.appUrl ? `<a class="app-link" href="${escapeHtml(msg.appUrl)}" target="_blank" rel="noopener">${escapeHtml(msg.content)}</a>` : `<span>${escapeHtml(msg.content)}</span>`;
+      bubble = `<div class="message-bubble app-bubble">${refHtml}<div class="app-title">${replyTitle}</div></div>`;
+
+    } else if (isFile) {
+      const title = msg.content.split('\n')[0] || '[文件]';
+      const fileLink = `<a href="${API}/api/file?path=${encodeURIComponent(msg.mediaPath)}" target="_blank" class="file-link">${escapeHtml(title)}</a>`;
+      bubble = `<div class="message-bubble app-bubble"><div class="file-icon-box"><span class="file-icon">&#128206;</span></div><div class="app-title">${fileLink}</div></div>`;
+
+    } else if (isMerged) {
+      const mergedHtml = `<div class="merged-msgs collapsed" data-seq="${msg.seq}">${msg.subMessages.map(s => `<div class="merged-item">${escapeHtml(s)}</div>`).join('')}<div style="display:flex;gap:4px;margin-top:4px"><button class="merged-toggle" onclick="toggleMerged(this)">${msg.subMessages.length > 10 ? '展开全部 ' + msg.subMessages.length + ' 条' : '展开'}</button><button class="merged-toggle" onclick="showMergedPopup(this)">弹窗查看</button></div></div>`;
+      bubble = `<div class="message-bubble app-bubble"><div class="app-title">${escapeHtml(msg.content.split('\n')[0])}</div>${mergedHtml}</div>`;
+
+    } else if (isOfficialArticle) {
+      const title = msg.appDescription ? msg.content.split('\n')[0] : msg.content;
+      const desc = msg.appDescription || '';
+      const author = msg.appAuthor || '';
+      const link = msg.appUrl ? `<a class="app-link" href="${escapeHtml(msg.appUrl)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : `<span>${escapeHtml(title)}</span>`;
+      const thumb = msg.appThumbUrl ? `<img class="app-thumb" src="${msg.appThumbUrl}" loading="lazy" onerror="this.remove()">` : '';
+      const authorHtml = author ? `<div class="app-author">${escapeHtml(author)}</div>` : '';
+      const descHtml = desc ? `<div class="app-desc">${escapeHtml(desc.substring(0, 200))}${desc.length > 200 ? '...' : ''}</div>` : '';
+      bubble = `<div class="message-bubble app-bubble official-article">${thumb}<div class="app-title">${link}</div>${descHtml}${authorHtml}</div>`;
+
+    } else {
+      const lines = msg.content.split('\n');
+      const title = lines[0] || '[应用消息]';
+      const desc = msg.appDescription || lines.slice(1).join('\n');
+      const link = msg.appUrl ? `<a class="app-link" href="${escapeHtml(msg.appUrl)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : `<span>${escapeHtml(title)}</span>`;
+      const thumb = msg.appThumbUrl ? `<img class="app-thumb" src="${msg.appThumbUrl}" loading="lazy" onerror="this.remove()">` : '';
+      const descHtml = desc ? `<div class="app-desc">${escapeHtml(desc.substring(0, 200))}${desc.length > 200 ? '...' : ''}</div>` : '';
+      bubble = `<div class="message-bubble app-bubble">${thumb}<div class="app-title">${link}</div>${descHtml}</div>`;
+    }
   } else {
     const tag = getTypeTag(msg.type);
     bubble = `<div class="message-bubble">${linkifyText(msg.content)}${tag}</div>`;
@@ -285,6 +321,8 @@ function renderMessageContent(msg) {
 function renderSessionItem(s) {
   const active = state.currentSession === s.username ? 'active' : '';
   const name = s.remark || s.nickname || s.alias || s.username;
+  const isOfficial = s.accountType === 'official';
+  const officialBadge = isOfficial ? `<span class="official-badge">公众号</span>` : '';
   const unread = s.unreadCount > 0 ? `<span class="unread-badge">${s.unreadCount > 99 ? '99+' : s.unreadCount}</span>` : '';
   const time = formatTime(s.lastTime);
   const msg = s.lastMessage ? escapeHtml(s.lastMessage).substring(0, 40) : '';
@@ -297,7 +335,7 @@ function renderSessionItem(s) {
       ${avatar}
       <div class="session-info">
         <div class="session-top">
-          <div class="session-name">${escapeHtml(name)}</div>
+          <div class="session-name">${officialBadge}${escapeHtml(name)}</div>
           <div class="session-time">${time}</div>
         </div>
         <div class="session-bottom">

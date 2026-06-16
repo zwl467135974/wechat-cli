@@ -13,6 +13,9 @@ export interface Message {
   appType?: number;
   appUrl?: string;
   appThumbUrl?: string;
+  appDescription?: string;
+  appAuthor?: string;
+  appArticles?: AppArticle[];
   referContent?: string;
   referSender?: string;
   referSeq?: number;
@@ -22,6 +25,13 @@ export interface Message {
   voiceText?: string;
   revokedOriginal?: string;
   subMessages?: string[];
+}
+
+export interface AppArticle {
+  title: string;
+  description?: string;
+  url?: string;
+  thumbUrl?: string;
 }
 
 export interface Session {
@@ -35,6 +45,7 @@ export interface Session {
   lastTime?: string;
   unreadCount?: number;
   isHidden?: boolean;
+  accountType?: "official" | "system" | "normal";
 }
 
 export interface Contact {

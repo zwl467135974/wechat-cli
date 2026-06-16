@@ -78,10 +78,33 @@ const SYSTEM_ACCOUNTS = new Set([
   "floatbottle",
   "medianote",
   "fmessage",
+  "qmessage",
+  "qqmail",
+  "tmessage",
+  "helper_entry",
+  "notifymessage",
+]);
+
+const HIDDEN_SYSTEM_ACCOUNTS = new Set([
+  "brandsessionholder",
+  "brandservicesessionholder",
+  "notifymessage",
 ]);
 
 function isSystemAccount(username: string): boolean {
   return SYSTEM_ACCOUNTS.has(username) || username.startsWith("gh_");
+}
+
+function isHiddenAccount(username: string): boolean {
+  if (HIDDEN_SYSTEM_ACCOUNTS.has(username)) return true;
+  if (username.startsWith("gh_") && username.includes("appmessage")) return true;
+  return false;
+}
+
+export function getAccountType(username: string): "official" | "system" | "normal" {
+  if (username.startsWith("gh_")) return "official";
+  if (SYSTEM_ACCOUNTS.has(username)) return "system";
+  return "normal";
 }
 
 export async function getSessions(
@@ -133,7 +156,7 @@ export async function getSessions(
   const allResults = rows[0].values.map((row: unknown[]) => {
     const username = String(row[0]);
     const contact = contactMap.get(username);
-    const isSystem = isSystemAccount(username);
+    const accountType = getAccountType(username);
     return {
       username,
       nickname: contact?.nickname || "",
@@ -144,7 +167,8 @@ export async function getSessions(
       lastMessage: row[1] ? String(row[1]) : undefined,
       lastTime: row[2] ? new Date(Number(row[2]) * 1000).toISOString() : undefined,
       unreadCount: Number(row[3]) || 0,
-      isHidden: isSystem || Number(row[4]) === 1,
+      isHidden: isHiddenAccount(username) || Number(row[4]) === 1,
+      accountType,
     };
   });
 

@@ -86,6 +86,9 @@ export async function parseMessageRow(
   let appType: number | undefined;
   let appUrl: string | undefined;
   let appThumbUrl: string | undefined;
+  let appDescription: string | undefined;
+  let appAuthor: string | undefined;
+  let appArticles: import("./models.js").AppArticle[] | undefined;
   let referContent: string | undefined;
   let referSender: string | undefined;
   let locationLabel: string | undefined;
@@ -145,6 +148,9 @@ export async function parseMessageRow(
     appType = appResult.appType;
     appUrl = appResult.appUrl;
     appThumbUrl = appResult.appThumbUrl;
+    appDescription = appResult.appDescription;
+    appAuthor = appResult.appAuthor;
+    appArticles = appResult.appArticles;
     referContent = appResult.referContent;
     referSender = appResult.referSender;
     referSeq = appResult.referSeq;
@@ -200,6 +206,9 @@ export async function parseMessageRow(
     appType,
     appUrl,
     appThumbUrl,
+    appDescription,
+    appAuthor,
+    appArticles,
     referContent,
     referSender,
     referSeq,
@@ -331,6 +340,9 @@ export interface AppMessageResult {
   appType?: number;
   appUrl?: string;
   appThumbUrl?: string;
+  appDescription?: string;
+  appAuthor?: string;
+  appArticles?: import("../db/models.js").AppArticle[];
   referContent?: string;
   referSender?: string;
   referSeq?: number;
@@ -358,6 +370,16 @@ export function extractAppMessage(raw: string): AppMessageResult {
   const thumbMatch = raw.match(/<thumburl>(?:<!\[CDATA\[)?(https?:\/\/[^\s<\]]+)/);
   const coverMatch = raw.match(/<cover>(?:<!\[CDATA\[)?(https?:\/\/[^\s<\]]+)/);
   result.appThumbUrl = thumbMatch?.[1] || coverMatch?.[1] || undefined;
+
+  const authorMatch = raw.match(/<sourcename>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/sourcename>/)
+    || raw.match(/<fromusername>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/fromusername>/);
+  if (authorMatch) result.appAuthor = authorMatch[1].trim();
+
+  const descForArticle = raw.match(/<des>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/des>/);
+  if (descForArticle && descForArticle[1].trim()) {
+    result.appDescription = descForArticle[1].trim()
+      .replace(/&amp;#x20;/g, " ").replace(/&amp;#x0A;/g, "\n").replace(/&#x20;/g, " ").replace(/&#x0A;/g, "\n");
+  }
 
   const referMatch = raw.match(/<refermsg>([\s\S]*?)<\/refermsg>/);
   if (referMatch) {
@@ -431,35 +453,69 @@ export function extractAppMessage(raw: string): AppMessageResult {
   const appInfoMatch = raw.match(/<appinfo>[\s\S]*?<title>([\s\S]*?)<\/title>[\s\S]*?<\/appinfo>/);
   const subAppmsgs = raw.match(/<appmsg[\s\S]*?<\/appmsg>/g);
   if (appInfoMatch && subAppmsgs && subAppmsgs.length > 1) {
-    const items = subAppmsgs.slice(0, 10).map((block, i) => {
+    const articles: import("./models.js").AppArticle[] = subAppmsgs.slice(0, 10).map((block) => {
       const tMatch = block.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
-      return `${i + 1}. ${tMatch ? tMatch[1].trim() : "..."}`;
+      const dMatch = block.match(/<des>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/des>/);
+      const uMatch = block.match(/<url>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/url>/);
+      const thMatch = block.match(/<thumburl>(?:<!\[CDATA\[)?(https?:\/\/[^\s<\]]+)/);
+      return {
+        title: tMatch ? tMatch[1].trim() : "...",
+        description: dMatch ? dMatch[1].trim() : undefined,
+        url: uMatch ? decodeURIComponent(uMatch[1]).replace(/&amp;/g, "&") : undefined,
+        thumbUrl: thMatch?.[1],
+      };
     });
     const header = appInfoMatch[1].trim();
-    result.content = `[合并转发] ${header} (${subAppmsgs.length}条)\n${items.join("\n")}`;
-    result.subMessages = subAppmsgs.map((block, i) => {
-      const tMatch = block.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
-      return `${i + 1}. ${tMatch ? tMatch[1].trim() : "..."}`;
-    });
+    result.content = `[合并转发] ${header} (${subAppmsgs.length}条)\n${articles.map((a, i) => `${i + 1}. ${a.title}`).join("\n")}`;
+    result.subMessages = articles.map((a, i) => `${i + 1}. ${a.title}`);
+    result.appArticles = articles;
     return result;
   }
 
   const descMatch = raw.match(/<des>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/des>/);
-  const desc = descMatch && descMatch[1] ? descMatch[1].trim() : "";
+  const desc = descMatch && descMatch[1] ? descMatch[1].trim()
+    .replace(/&amp;#x20;/g, " ").replace(/&amp;#x0A;/g, "\n").replace(/&#x20;/g, " ").replace(/&#x0A;/g, "\n") : "";
 
   const typeLabels: Record<number, string> = {
     5: "", 6: "[文件]", 8: "[动画表情]", 17: "[实时位置]",
     21: "[名片]", 33: "[小程序]", 36: "[小程序]",
-    57: "", 62: "[视频号]", 63: "[视频号直播]", 76: "[视频号视频]",
+    51: "[服务通知]", 57: "", 62: "[视频号]", 63: "[视频号直播]", 76: "[视频号视频]",
     87: "[群公告]", 88: "[红包]", 95: "[投票]", 109: "[游戏]",
+    2000: "[服务通知]",
   };
 
   const prefix = typeLabels[result.appType || 0] || "";
-  if (desc && desc.length < 200) {
+
+  if (result.appType === 62 || result.appType === 76) {
+    const descMatch2 = raw.match(/<desc>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/desc>/);
+    const videoDesc = descMatch2 ? descMatch2[1].trim() : "";
+    const finderMatch = raw.match(/<finderFeed[\s\S]*?<desc>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/desc>/);
+    const feedDesc = finderMatch ? finderMatch[1].trim() : "";
+    const objectNonceMatch = raw.match(/<objectNonce>([\s\S]*?)<\/objectNonce>/);
+    const finalDesc = videoDesc || feedDesc;
+    result.content = `${prefix} ${title}${finalDesc ? `\n${finalDesc.substring(0, 150)}` : ""}`;
+    if (result.appDescription) result.appDescription = finalDesc || result.appDescription;
+    return result;
+  }
+
+  if (result.appType === 63) {
+    result.content = `[视频号直播] ${title}`;
+    return result;
+  }
+
+  if (result.appType === 51 || result.appType === 2000) {
+    result.content = `[服务通知] ${title}${desc ? `\n${desc.substring(0, 200)}` : ""}`;
+    result.appDescription = desc || result.appDescription;
+    return result;
+  }
+
+  if (desc && desc.length < 500) {
     result.content = `${prefix}${title}\n${desc}`;
   } else {
     result.content = prefix ? `${prefix} ${title}` : title;
   }
+
+  if (desc) result.appDescription = desc;
 
   return result;
 }
