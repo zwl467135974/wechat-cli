@@ -1340,6 +1340,52 @@ body {
   border-left: 3px solid var(--accent);
 }
 
+.sub-list-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg-secondary);
+  z-index: 5;
+}
+
+.sub-list-header:hover {
+  background: var(--bg-hover);
+}
+
+.back-arrow {
+  font-size: 22px;
+  line-height: 1;
+  color: var(--accent);
+}
+
+.official-entry {
+  cursor: pointer;
+  border-top: 1px solid var(--border);
+}
+
+.official-entry-avatar {
+  background: var(--accent);
+  color: #fff;
+  font-size: 20px;
+}
+
+.official-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  padding: 1px 6px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
 .articles-bubble {
   max-width: 340px;
 }

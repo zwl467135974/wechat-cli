@@ -42,6 +42,7 @@ let state = {
   page: 'chat',
   sessions: [],
   currentSession: null,
+  sessionView: 'normal',
   messages: [],
   contacts: [],
   searchResults: [],
@@ -337,6 +338,38 @@ function renderMessageContent(msg) {
     </div>`;
 }
 
+function renderOfficialEntry(officialSessions) {
+  const latest = officialSessions[0];
+  const count = officialSessions.length;
+  const name = latest ? (latest.remark || latest.nickname || latest.alias || '') : '';
+  const msg = latest?.lastMessage ? escapeHtml(latest.lastMessage).substring(0, 40) : '';
+  const time = formatTime(latest?.lastTime);
+  return `
+    <div class="session-item official-entry" onclick="showOfficialList()">
+      <div class="session-avatar official-entry-avatar">📢</div>
+      <div class="session-info">
+        <div class="session-top">
+          <div class="session-name">公众号</div>
+          <div class="session-time">${time}</div>
+        </div>
+        <div class="session-bottom">
+          <div class="session-msg">${name ? escapeHtml(name) + ': ' : ''}${msg || '点击查看公众号消息'}</div>
+          <span class="official-count">${count}</span>
+        </div>
+      </div>
+    </div>`;
+}
+
+window.showOfficialList = function() {
+  state.sessionView = 'official';
+  renderChatPage();
+};
+
+window.backToSessions = function() {
+  state.sessionView = 'normal';
+  renderChatPage();
+};
+
 function renderSessionItem(s) {
   const active = state.currentSession === s.username ? 'active' : '';
   const name = s.remark || s.nickname || s.alias || s.username;
@@ -447,7 +480,21 @@ async function loadMessages(talkerId, append) {
 }
 
 function renderChatPage() {
-  const sessionHtml = state.sessions.map(renderSessionItem).join('');
+  const officialSessions = state.sessions.filter(s => s.accountType === 'official');
+  const normalSessions = state.sessions.filter(s => s.accountType !== 'official');
+  const searchVal = $('#sessionSearch')?.value || '';
+  const isSearching = searchVal.length > 0;
+
+  let sessionHtml;
+  if (isSearching) {
+    sessionHtml = state.sessions.map(renderSessionItem).join('');
+  } else if (state.sessionView === 'official') {
+    sessionHtml = '<div class="sub-list-header" onclick="backToSessions()"><span class="back-arrow">‹</span> 公众号</div>'
+      + (officialSessions.map(renderSessionItem).join('') || '<div class="empty-state" style="padding:40px"><div class="empty-state-icon">📭</div><div>暂无公众号</div></div>');
+  } else {
+    sessionHtml = normalSessions.map(renderSessionItem).join('')
+      + (officialSessions.length > 0 ? renderOfficialEntry(officialSessions) : '');
+  }
   const current = state.sessions.find(s => s.username === state.currentSession);
   const name = current ? (current.remark || current.nickname || current.alias || current.username) : '';
   const headerAvatar = current?.smallHeadUrl
