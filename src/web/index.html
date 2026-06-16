@@ -143,6 +143,14 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+function proxyImgUrl(url) {
+  if (!url) return '';
+  if (url.indexOf('mmbiz.') > -1 || url.indexOf('wx.qlogo.cn') > -1 || url.indexOf('weixin.qq.com') > -1) {
+    return API + '/api/img-proxy?url=' + encodeURIComponent(url);
+  }
+  return url;
+}
+
 function linkifyText(s) {
   return escapeHtml(s).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:var(--accent);word-break:break-all">$1</a>');
 }
@@ -264,7 +272,7 @@ function renderMessageContent(msg) {
       const articlesHtml = msg.appArticles.map((a, i) => {
         const articleLink = a.url ? `<a class="article-link article-open" data-url="${escapeHtml(a.url)}" href="${escapeHtml(a.url)}" target="_blank" rel="noopener">` : '<span class="article-link">';
         const articleClose = a.url ? '</a>' : '</span>';
-        const thumb = a.thumbUrl ? `<img class="article-list-thumb" src="${a.thumbUrl}" loading="lazy" onerror="this.remove()">` : '';
+        const thumb = a.thumbUrl ? `<img class="article-list-thumb" src="${proxyImgUrl(a.thumbUrl)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : '';
         const desc = a.description ? `<div class="article-list-desc">${escapeHtml(a.description.substring(0, 80))}${a.description.length > 80 ? '...' : ''}</div>` : '';
         return `<div class="article-list-item">${articleLink}${thumb}<div class="article-list-body"><div class="article-list-title">${escapeHtml(a.title)}</div>${desc}</div>${articleClose}</div>`;
       }).join('');
@@ -289,7 +297,7 @@ function renderMessageContent(msg) {
       const desc = msg.appDescription || '';
       const author = msg.appAuthor || '';
       const link = msg.appUrl ? `<a class="app-link article-open" data-url="${escapeHtml(msg.appUrl)}" href="${escapeHtml(msg.appUrl)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : `<span>${escapeHtml(title)}</span>`;
-      const thumb = msg.appThumbUrl ? `<img class="app-thumb" src="${msg.appThumbUrl}" loading="lazy" onerror="this.remove()">` : '';
+      const thumb = msg.appThumbUrl ? `<img class="app-thumb" src="${proxyImgUrl(msg.appThumbUrl)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : '';
       const authorHtml = author ? `<div class="app-author">${escapeHtml(author)}</div>` : '';
       const descHtml = desc ? `<div class="app-desc">${escapeHtml(desc.substring(0, 200))}${desc.length > 200 ? '...' : ''}</div>` : '';
       bubble = `<div class="message-bubble app-bubble official-article">${thumb}<div class="app-title">${link}</div>${descHtml}${authorHtml}</div>`;
@@ -299,7 +307,7 @@ function renderMessageContent(msg) {
       const title = lines[0] || '[应用消息]';
       const desc = msg.appDescription || lines.slice(1).join('\n');
       const link = msg.appUrl ? `<a class="app-link article-open" data-url="${escapeHtml(msg.appUrl)}" href="${escapeHtml(msg.appUrl)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>` : `<span>${escapeHtml(title)}</span>`;
-      const thumb = msg.appThumbUrl ? `<img class="app-thumb" src="${msg.appThumbUrl}" loading="lazy" onerror="this.remove()">` : '';
+      const thumb = msg.appThumbUrl ? `<img class="app-thumb" src="${proxyImgUrl(msg.appThumbUrl)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : '';
       const descHtml = desc ? `<div class="app-desc">${escapeHtml(desc.substring(0, 200))}${desc.length > 200 ? '...' : ''}</div>` : '';
       bubble = `<div class="message-bubble app-bubble">${thumb}<div class="app-title">${link}</div>${descHtml}</div>`;
     }
